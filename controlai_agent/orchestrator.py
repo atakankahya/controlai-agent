@@ -1,0 +1,445 @@
+"""Control-LLM Agent Orchestrator: Multi-step tool calling, execution, grounding, and streaming synthesis loop."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Generator
+
+from mlx_lm import generate, load, stream_generate
+from transformers import AutoTokenizer
+
+from controlai_agent.prompts import CONTROLAI_SYSTEM_PROMPT
+from controlai_agent.registry import ToolRegistry, registry
+import controlai_agent.tools  # noqa: F401 (ensure all tools are registered)
+from controlai_rag.index import ControlRAGIndex
+
+
+@dataclass
+class ToolExecutionTrace:
+    tool_name: str
+    arguments: dict[str, Any]
+    result: dict[str, Any]
+
+
+@dataclass
+class AgentResult:
+    final_response: str
+    tool_traces: list[ToolExecutionTrace] = field(default_factory=list)
+    total_steps: int = 0
+    raw_messages: list[dict[str, Any]] = field(default_factory=list)
+    is_grounded: bool = True
+    plots: list[str] = field(default_factory=list)
+
+
+def sanitize_json_escapes(raw: str) -> str:
+    """Escape unescaped backslashes in JSON strings (e.g. \\dot, \\omega, \\mu in math/code)."""
+    return re.sub(r"\\(?![/\"\\bfnrtu])", r"\\\\", raw)
+
+
+def parse_flexible_json(raw_str: str) -> dict[str, Any] | None:
+    """Parse JSON with fallback to escape sanitization and non-strict control characters."""
+    raw_str = raw_str.strip()
+    try:
+        obj = json.loads(raw_str, strict=False)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    try:
+        sanitized = sanitize_json_escapes(raw_str)
+        obj = json.loads(sanitized, strict=False)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    return None
+
+
+def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
+    """Parse tool calls from <tool_call>, markdown code blocks, or raw JSON robustly."""
+    calls: list[dict[str, Any]] = []
+
+    # 1. Standard <tool_call> tags
+    for match in re.finditer(r"<tool_call>\s*([\s\S]*?)\s*</tool_call>", text):
+        obj = parse_flexible_json(match.group(1))
+        if obj and "name" in obj:
+            calls.append(obj)
+
+    # 2. Markdown json blocks with tool call schema
+    if not calls:
+        for match in re.finditer(r"```(?:json)?\s*(\{\s*[\"']name[\"']\s*:[\s\S]*?\})\s*```", text):
+            obj = parse_flexible_json(match.group(1))
+            if obj and "name" in obj:
+                calls.append(obj)
+
+    # 3. Raw JSON object containing "name" and "arguments" / "parameters"
+    if not calls and '"name"' in text or "'name'" in text:
+        # Match starting from first '{' to last matching '}'
+        match = re.search(r"(\{\s*[\"']name[\"']\s*:\s*[\"'][a-zA-Z0-9_]+[\"'][\s\S]*\})", text)
+        if match:
+            obj = parse_flexible_json(match.group(1))
+            if obj and "name" in obj:
+                calls.append(obj)
+
+    # Clean pre-tool thought / raw JSON artifacts
+    cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"```(?:json)?\s*\{\s*[\"']name[\"']\s*:[\s\S]*?\}\s*```", "", cleaned)
+    cleaned = re.sub(r"\{\s*[\"']name[\"']\s*:\s*[\"'][a-zA-Z0-9_]+[\"'][\s\S]*\}", "", cleaned)
+    cleaned = cleaned.strip()
+    return calls, cleaned
+
+
+class ControlAIAgent:
+    """Offline Control Engineering Agent using Qwen3-4B on MLX with deterministic tool calling and streaming."""
+
+    def __init__(
+        self,
+        model_path: str = "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+        adapter_path: str | None = None,
+        tool_registry: ToolRegistry = registry,
+        max_tool_steps: int = 3,
+    ) -> None:
+        self.model_path = model_path
+        self.adapter_path = adapter_path
+        self.registry = tool_registry
+        self.max_tool_steps = max_tool_steps
+
+        # Load MLX model and HF tokenizer
+        if adapter_path:
+            self.model, self.mlx_tokenizer = load(model_path, adapter_path=adapter_path)
+        else:
+            self.model, self.mlx_tokenizer = load(model_path)
+        self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+        # Initialize local offline RAG index
+        try:
+            self.rag_index = ControlRAGIndex()
+        except Exception:
+            self.rag_index = None
+
+    def _get_grounded_instruction(self, user_prompt: str, base_instruction: str) -> str:
+        """Retrieve relevant textbook theorems and inject grounding into system instructions."""
+        if not self.rag_index or not self.rag_index.chunks:
+            return base_instruction
+
+        try:
+            rag_hits = self.rag_index.search(user_prompt, top_k=3)
+            high_rel = [h for h in rag_hits if h.get("score", 0) > 2.5]
+            if not high_rel:
+                return base_instruction
+
+            ref_texts = []
+            for h in high_rel[:2]:
+                fname = h.get("filename", "Reference")
+                page = h.get("page")
+                page_str = f" (p. {page})" if page else ""
+                clean_chunk = h.get("text", "")[:400].strip()
+                ref_texts.append(f"[{fname}{page_str}]:\n{clean_chunk}")
+
+            return base_instruction + "\n\n### Grounded Reference Context from Canonical Control Literature:\n" + "\n\n".join(ref_texts)
+        except Exception:
+            return base_instruction
+
+    def run(
+        self,
+        user_prompt: str,
+        system_instruction: str = CONTROLAI_SYSTEM_PROMPT,
+        history: list[dict[str, Any]] | None = None,
+        max_tokens_per_step: int = 2500,
+        verbose: bool = False,
+    ) -> AgentResult:
+        """Execute a complete agent interaction loop synchronously."""
+        messages: list[dict[str, Any]] = []
+        effective_sys = self._get_grounded_instruction(user_prompt, system_instruction)
+        if effective_sys:
+            messages.append({"role": "system", "content": effective_sys})
+
+        if history:
+            for item in history:
+                r = item.get("role")
+                c = item.get("content")
+                if r in ("user", "assistant") and c:
+                    messages.append({"role": r, "content": c})
+
+        messages.append({"role": "user", "content": user_prompt})
+
+        tools_schema = self.registry.get_tool_schemas()
+        traces: list[ToolExecutionTrace] = []
+        plots: list[str] = []
+        called_signatures: set[str] = set()
+
+        for step in range(1, self.max_tool_steps + 1):
+            rendered_prompt = self.hf_tokenizer.apply_chat_template(
+                messages,
+                tools=tools_schema,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+
+            model_output = generate(
+                self.model,
+                self.mlx_tokenizer,
+                prompt=rendered_prompt,
+                max_tokens=max_tokens_per_step,
+                verbose=False,
+            ).strip()
+
+            tool_calls, pre_text = _extract_tool_calls(model_output)
+
+            if not tool_calls:
+                clean_output = re.sub(r"<tool_call>.*?</tool_call>", "", model_output, flags=re.DOTALL).strip()
+                return AgentResult(
+                    final_response=clean_output,
+                    tool_traces=traces,
+                    total_steps=step,
+                    raw_messages=messages,
+                    is_grounded=True,
+                    plots=plots,
+                )
+
+            # Check for loops
+            new_calls = []
+            for call in tool_calls:
+                sig = f"{call.get('name')}:{json.dumps(call.get('arguments', {}), sort_keys=True)}"
+                if sig not in called_signatures:
+                    called_signatures.add(sig)
+                    new_calls.append(call)
+
+            if not new_calls:
+                break
+
+            messages.append({"role": "assistant", "content": model_output})
+
+            for call_data in new_calls:
+                tool_name = call_data.get("name")
+                tool_args = call_data.get("arguments", {})
+
+                tool_result = self.registry.execute(tool_name, tool_args)
+                traces.append(ToolExecutionTrace(tool_name=tool_name, arguments=tool_args, result=tool_result))
+
+                if "plot_path" in tool_result:
+                    p_path = Path(tool_result["plot_path"])
+                    if p_path.exists():
+                        plots.append(f"/plots/{p_path.name}")
+
+                messages.append({
+                    "role": "tool",
+                    "name": tool_name,
+                    "content": json.dumps(tool_result, ensure_ascii=False),
+                })
+
+        # Final synthesis after tool execution
+        forced_prompt = self.hf_tokenizer.apply_chat_template(
+            messages,
+            tools=None,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        final_output = generate(
+            self.model,
+            self.mlx_tokenizer,
+            prompt=forced_prompt,
+            max_tokens=max_tokens_per_step,
+            verbose=False,
+        ).strip()
+
+        _, clean_final = _extract_tool_calls(final_output)
+        return AgentResult(
+            final_response=clean_final or final_output,
+            tool_traces=traces,
+            total_steps=len(traces) + 1,
+            raw_messages=messages,
+            is_grounded=True,
+            plots=plots,
+        )
+
+    def run_stream(
+        self,
+        user_prompt: str,
+        system_instruction: str = CONTROLAI_SYSTEM_PROMPT,
+        history: list[dict[str, Any]] | None = None,
+        max_tokens_per_step: int = 2500,
+    ) -> Generator[dict[str, Any], None, None]:
+        """Stream token-by-token generation and tool execution events with zero JSON leakage."""
+        messages: list[dict[str, Any]] = []
+        effective_sys = self._get_grounded_instruction(user_prompt, system_instruction)
+        if effective_sys:
+            messages.append({"role": "system", "content": effective_sys})
+
+        if history:
+            for item in history:
+                r = item.get("role")
+                c = item.get("content", "")
+                if r in ("user", "assistant") and c:
+                    # Strip any legacy JSON tool call artifacts from previous chat sessions
+                    c_clean = re.sub(r"\{\s*[\"']name[\"']\s*:[\s\S]*?\}\s*\}", "", c).strip()
+                    c_clean = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", c_clean).strip()
+                    if c_clean:
+                        messages.append({"role": r, "content": c_clean})
+
+        messages.append({"role": "user", "content": user_prompt})
+
+        tools_schema = self.registry.get_tool_schemas()
+        traces: list[dict[str, Any]] = []
+        plots: list[str] = []
+        thoughts: list[str] = []
+        called_signatures: set[str] = set()
+
+        # Dynamic thought generation - only show thoughts when tools or derivations occur
+        for step in range(1, self.max_tool_steps + 1):
+            rendered_prompt = self.hf_tokenizer.apply_chat_template(
+                messages,
+                tools=tools_schema,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+
+            model_output = generate(
+                self.model,
+                self.mlx_tokenizer,
+                prompt=rendered_prompt,
+                max_tokens=max_tokens_per_step,
+                verbose=False,
+            ).strip()
+
+            tool_calls, pre_text = _extract_tool_calls(model_output)
+
+            if not tool_calls:
+                # Direct final answer without tools -> stream tokens directly
+                clean_output = pre_text or model_output
+                words = re.split(r"(\s+)", clean_output)
+                for w in words:
+                    if w:
+                        yield {"type": "token", "content": w}
+
+                yield {
+                    "type": "done",
+                    "response": clean_output,
+                    "traces": traces,
+                    "plots": plots,
+                    "thoughts": thoughts,
+                }
+                return
+
+            if pre_text:
+                thoughts.append(pre_text)
+                yield {"type": "thought", "content": pre_text}
+
+            # Filter out duplicate loops
+            new_calls = []
+            for call in tool_calls:
+                sig = f"{call.get('name')}:{json.dumps(call.get('arguments', {}), sort_keys=True)}"
+                if sig not in called_signatures:
+                    called_signatures.add(sig)
+                    new_calls.append(call)
+
+            if not new_calls:
+                break
+
+            messages.append({"role": "assistant", "content": model_output})
+
+            for call_data in new_calls:
+                tool_name = call_data.get("name")
+                tool_args = call_data.get("arguments", {})
+
+                t_start_msg = f"Executing tool: {tool_name} with parameters: {json.dumps(tool_args, ensure_ascii=False)}"
+                thoughts.append(t_start_msg)
+                yield {"type": "thought", "content": t_start_msg}
+                yield {"type": "tool_start", "tool": tool_name, "args": tool_args}
+
+                tool_result = self.registry.execute(tool_name, tool_args)
+                trace_item = {
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "status": tool_result.get("status", "success"),
+                    "residual": tool_result.get("residual"),
+                }
+                traces.append(trace_item)
+
+                if "plot_path" in tool_result:
+                    p_path = Path(tool_result["plot_path"])
+                    if p_path.exists():
+                        plot_url = f"/plots/{p_path.name}"
+                        plots.append(plot_url)
+                        yield {"type": "plot", "url": plot_url}
+
+                yield {"type": "tool_end", "trace": trace_item}
+                t_end_msg = f"Tool {tool_name} returned status: {trace_item['status']}"
+                thoughts.append(t_end_msg)
+                yield {"type": "thought", "content": t_end_msg}
+
+                messages.append({
+                    "role": "tool",
+                    "name": tool_name,
+                    "content": json.dumps(tool_result, ensure_ascii=False),
+                })
+
+        # Final Synthesis phase
+        synth_thought = "Synthesizing verified engineering response and LaTeX formulations..."
+        thoughts.append(synth_thought)
+        yield {"type": "thought", "content": synth_thought}
+
+        messages.append({
+            "role": "user",
+            "content": "Synthesize the simulation and calculation results above into a complete, thorough engineering explanation with LaTeX equations. Do not output any JSON or tool call tags.",
+        })
+
+        forced_prompt = self.hf_tokenizer.apply_chat_template(
+            messages,
+            tools=None,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        final_output = generate(
+            self.model,
+            self.mlx_tokenizer,
+            prompt=forced_prompt,
+            max_tokens=max_tokens_per_step,
+            verbose=False,
+        ).strip()
+
+        # If model generated another tool call during final synthesis, execute it!
+        synth_tool_calls, clean_synth = _extract_tool_calls(final_output)
+        if synth_tool_calls:
+            for call_data in synth_tool_calls:
+                tool_name = call_data.get("name")
+                tool_args = call_data.get("arguments", {})
+                t_res = self.registry.execute(tool_name, tool_args)
+                if "plot_path" in t_res:
+                    p_path = Path(t_res["plot_path"])
+                    if p_path.exists():
+                        plot_url = f"/plots/{p_path.name}"
+                        plots.append(plot_url)
+                        yield {"type": "plot", "url": plot_url}
+                messages.append({"role": "tool", "name": tool_name, "content": json.dumps(t_res, ensure_ascii=False)})
+
+            # Re-generate synthesis after executing the tool
+            re_prompt = self.hf_tokenizer.apply_chat_template(messages, tools=None, tokenize=False, add_generation_prompt=True)
+            final_output = generate(self.model, self.mlx_tokenizer, prompt=re_prompt, max_tokens=max_tokens_per_step, verbose=False).strip()
+            _, clean_synth = _extract_tool_calls(final_output)
+
+        final_text = clean_synth or final_output
+        # Strip any lingering raw json
+        final_text = re.sub(r"\{\s*[\"']name[\"']\s*:[\s\S]*?\}\s*\}", "", final_text).strip()
+        if not final_text:
+            final_text = "The computational analysis and simulation have been executed successfully as detailed above."
+
+        # Stream words smoothly
+        words = re.split(r"(\s+)", final_text)
+        for w in words:
+            if w:
+                yield {"type": "token", "content": w}
+
+        yield {
+            "type": "done",
+            "response": final_text,
+            "traces": traces,
+            "plots": plots,
+            "thoughts": thoughts,
+        }

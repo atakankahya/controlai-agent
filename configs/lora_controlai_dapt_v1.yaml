@@ -1,0 +1,46 @@
+# Optional knowledge-adaptation stage over the curated 21.95M-token corpus.
+model: mlx-community/Qwen3-4B-Instruct-2507-4bit
+train: true
+fine_tune_type: lora
+data: data/training/dapt_v1
+seed: 20260816
+mask_prompt: false
+
+num_layers: 36
+batch_size: 1
+grad_accumulation_steps: 8
+iters: 35000
+max_seq_length: 1024
+grad_checkpoint: true
+clear_cache_threshold: 12000000000
+
+optimizer: adamw
+optimizer_config:
+  adamw:
+    weight_decay: 0.01
+learning_rate: 2.0e-6
+lr_schedule:
+  name: cosine_decay
+  # Scheduler steps advance on optimizer updates: 35000 / accumulation 8 = 4375.
+  arguments: [2.0e-6, 4312, 2.0e-7]
+  warmup: 63
+  warmup_init: 2.0e-7
+
+val_batches: 100
+steps_per_report: 50
+steps_per_eval: 2000
+save_every: 2000
+adapter_path: adapters/controlai_qwen3_4b_dapt_v1
+
+lora_parameters:
+  rank: 16
+  dropout: 0.05
+  scale: 32.0
+  keys:
+    - self_attn.q_proj
+    - self_attn.k_proj
+    - self_attn.v_proj
+    - self_attn.o_proj
+    - mlp.gate_proj
+    - mlp.up_proj
+    - mlp.down_proj

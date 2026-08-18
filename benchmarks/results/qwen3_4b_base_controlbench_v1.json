@@ -1,0 +1,504 @@
+{
+  "overall_score": 47.3,
+  "pillar_scores": {
+    "theory_and_concepts": 83.3,
+    "numerical_synthesis": 0.0,
+    "code_and_simulation": 29.0,
+    "underspecified_and_traps": 60.0,
+    "real_world_case_studies": 80.0
+  },
+  "total_items": 50,
+  "evaluated_items": 50,
+  "item_results": [
+    {
+      "id": "cb_theory_001",
+      "pillar": "theory_and_concepts",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "concepts_found": 4,
+        "total_concepts": 4,
+        "missing": []
+      }
+    },
+    {
+      "id": "cb_theory_002",
+      "pillar": "theory_and_concepts",
+      "score": 75.0,
+      "details": {
+        "score": 75.0,
+        "concepts_found": 3,
+        "total_concepts": 4,
+        "missing": [
+          "PBH immediately determines stabilizability (if uncontrollable modes have Re(lambda) < 0)"
+        ]
+      }
+    },
+    {
+      "id": "cb_theory_003",
+      "pillar": "theory_and_concepts",
+      "score": 75.0,
+      "details": {
+        "score": 75.0,
+        "concepts_found": 3,
+        "total_concepts": 4,
+        "missing": [
+          "RHP zero at z requires closed-loop bandwidth to be bounded below approximately z/2"
+        ]
+      }
+    },
+    {
+      "id": "cb_theory_004",
+      "pillar": "theory_and_concepts",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "concepts_found": 4,
+        "total_concepts": 4,
+        "missing": []
+      }
+    },
+    {
+      "id": "cb_theory_005",
+      "pillar": "theory_and_concepts",
+      "score": 75.0,
+      "details": {
+        "score": 75.0,
+        "concepts_found": 3,
+        "total_concepts": 4,
+        "missing": [
+          "Closed-loop eigenvalues are exactly the union of LQR poles and observer poles"
+        ]
+      }
+    },
+    {
+      "id": "cb_theory_006",
+      "pillar": "theory_and_concepts",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "concepts_found": 4,
+        "total_concepts": 4,
+        "missing": []
+      }
+    },
+    {
+      "id": "cb_theory_007",
+      "pillar": "theory_and_concepts",
+      "score": 75.0,
+      "details": {
+        "score": 75.0,
+        "concepts_found": 3,
+        "total_concepts": 4,
+        "missing": [
+          "Provides structural robustness against plant parameter variations"
+        ]
+      }
+    },
+    {
+      "id": "cb_theory_008",
+      "pillar": "theory_and_concepts",
+      "score": 66.7,
+      "details": {
+        "score": 66.7,
+        "concepts_found": 2,
+        "total_concepts": 3,
+        "missing": [
+          "Result stems from Kalman inequality (return difference inequality): ||I + R^(1/2) K (sI-A)^(-1) B R^(-1/2)|| >= 1 for s=jw"
+        ]
+      }
+    },
+    {
+      "id": "cb_theory_009",
+      "pillar": "theory_and_concepts",
+      "score": 66.7,
+      "details": {
+        "score": 66.7,
+        "concepts_found": 2,
+        "total_concepts": 3,
+        "missing": [
+          "Passivity is preferred in physical systems (mechanical, electrical, robotics) with energy storage and collocated actuators/sensors where infinite gain margin is achievable"
+        ]
+      }
+    },
+    {
+      "id": "cb_theory_010",
+      "pillar": "theory_and_concepts",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "concepts_found": 4,
+        "total_concepts": 4,
+        "missing": []
+      }
+    },
+    {
+      "id": "cb_num_001",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_002",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_003",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_004",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_005",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_006",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_007",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_008",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_009",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_010",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_011",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_num_012",
+      "pillar": "numerical_synthesis",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "tool_matched": false,
+        "numeric_verified": false
+      }
+    },
+    {
+      "id": "cb_code_001",
+      "pillar": "code_and_simulation",
+      "score": 30.0,
+      "details": {
+        "score": 30.0,
+        "sandbox_executed": false,
+        "message": "SyntaxError: invalid syntax (<string>, line 2)"
+      }
+    },
+    {
+      "id": "cb_code_002",
+      "pillar": "code_and_simulation",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "status": "No code block found"
+      }
+    },
+    {
+      "id": "cb_code_003",
+      "pillar": "code_and_simulation",
+      "score": 30.0,
+      "details": {
+        "score": 30.0,
+        "sandbox_executed": false,
+        "message": "AttributeError: module 'scipy.signal' has no attribute 'margin'"
+      }
+    },
+    {
+      "id": "cb_code_004",
+      "pillar": "code_and_simulation",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "status": "No code block found"
+      }
+    },
+    {
+      "id": "cb_code_005",
+      "pillar": "code_and_simulation",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "status": "No code block found"
+      }
+    },
+    {
+      "id": "cb_code_006",
+      "pillar": "code_and_simulation",
+      "score": 30.0,
+      "details": {
+        "score": 30.0,
+        "sandbox_executed": false,
+        "message": "AssertionError: Numerator mismatch: [[0.0000000e+00 8.8817842e-16 1.0000000e+00]] vs [1.0]"
+      }
+    },
+    {
+      "id": "cb_code_007",
+      "pillar": "code_and_simulation",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "matlab_syntax_score": 100.0
+      }
+    },
+    {
+      "id": "cb_code_008",
+      "pillar": "code_and_simulation",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "status": "No code block found"
+      }
+    },
+    {
+      "id": "cb_code_009",
+      "pillar": "code_and_simulation",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "status": "No code block found"
+      }
+    },
+    {
+      "id": "cb_code_010",
+      "pillar": "code_and_simulation",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "sandbox_executed": true,
+        "message": "Executed cleanly with assertions passed"
+      }
+    },
+    {
+      "id": "cb_trap_001",
+      "pillar": "underspecified_and_traps",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "refusal_or_trap_detected": false
+      }
+    },
+    {
+      "id": "cb_trap_002",
+      "pillar": "underspecified_and_traps",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "refusal_or_trap_detected": true
+      }
+    },
+    {
+      "id": "cb_trap_003",
+      "pillar": "underspecified_and_traps",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "refusal_or_trap_detected": false
+      }
+    },
+    {
+      "id": "cb_trap_004",
+      "pillar": "underspecified_and_traps",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "refusal_or_trap_detected": false
+      }
+    },
+    {
+      "id": "cb_trap_005",
+      "pillar": "underspecified_and_traps",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "refusal_or_trap_detected": true
+      }
+    },
+    {
+      "id": "cb_trap_006",
+      "pillar": "underspecified_and_traps",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "refusal_or_trap_detected": true
+      }
+    },
+    {
+      "id": "cb_trap_007",
+      "pillar": "underspecified_and_traps",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "refusal_or_trap_detected": true
+      }
+    },
+    {
+      "id": "cb_trap_008",
+      "pillar": "underspecified_and_traps",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "refusal_or_trap_detected": true
+      }
+    },
+    {
+      "id": "cb_trap_009",
+      "pillar": "underspecified_and_traps",
+      "score": 0.0,
+      "details": {
+        "score": 0.0,
+        "refusal_or_trap_detected": false
+      }
+    },
+    {
+      "id": "cb_trap_010",
+      "pillar": "underspecified_and_traps",
+      "score": 100.0,
+      "details": {
+        "score": 100.0,
+        "refusal_or_trap_detected": true
+      }
+    },
+    {
+      "id": "cb_case_001",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    },
+    {
+      "id": "cb_case_002",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    },
+    {
+      "id": "cb_case_003",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    },
+    {
+      "id": "cb_case_004",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    },
+    {
+      "id": "cb_case_005",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    },
+    {
+      "id": "cb_case_006",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    },
+    {
+      "id": "cb_case_007",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    },
+    {
+      "id": "cb_case_008",
+      "pillar": "real_world_case_studies",
+      "score": 80.0,
+      "details": {
+        "score": 80.0
+      }
+    }
+  ]
+}

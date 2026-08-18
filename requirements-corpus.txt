@@ -1,0 +1,6 @@
+# Corpus discovery and crawling
+Scrapy==2.17.0
+
+# PDF/HTML extraction used by scripts/extract_corpus.py
+PyMuPDF==1.28.2
+beautifulsoup4==4.15.0

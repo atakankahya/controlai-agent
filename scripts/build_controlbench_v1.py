@@ -1,0 +1,706 @@
+"""Build ControlBench v1: Universal 50-Item Control Engineering Benchmark."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+BENCHMARK_PATH = Path("benchmarks/controlbench_v1.jsonl")
+
+
+def build_controlbench() -> None:
+    items = []
+
+    # =========================================================================
+    # PILLAR 1: THEORY & CORE CONCEPTS (10 items)
+    # =========================================================================
+    items.append({
+        "id": "cb_theory_001",
+        "pillar": "theory_and_concepts",
+        "topic": "frequency_domain_heuristics",
+        "prompt": "What is the theoretical and practical relationship between the open-loop Phase Margin (PM) and the closed-loop damping ratio (zeta) for a standard second-order system? Explain why this approximation holds and where it breaks down.",
+        "ground_truth": {
+            "key_concepts": [
+                "zeta approx PM / 100 (for PM in degrees <= 60 deg)",
+                "Exact formula PM = arctan(2*zeta / sqrt(sqrt(1+4*zeta^4) - 2*zeta^2))",
+                "Approximation holds accurately for 0 <= zeta <= 0.6",
+                "Breaks down for high phase margins (PM > 70 deg) or systems with non-dominant high-frequency poles/zeros",
+            ],
+            "rubric": {
+                "formula_correctness": 2.0,
+                "range_of_validity": 1.5,
+                "physical_intuition": 1.5,
+            },
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_002",
+        "pillar": "theory_and_concepts",
+        "topic": "state_space_controllability",
+        "prompt": "Compare the Controllability Matrix rank condition (Kalman test) with the Popov-Belevitch-Hautus (PBH) rank test. When is PBH preferred in engineering practice, and what additional modal information does PBH provide?",
+        "ground_truth": {
+            "key_concepts": [
+                "Kalman matrix C = [B, AB, ..., A^(n-1)B] can be numerically ill-conditioned for large n due to matrix powers",
+                "PBH test checks rank([lambda*I - A, B]) = n for every eigenvalue lambda of A",
+                "PBH directly identifies uncontrollable modes (eigenvalues where rank drops)",
+                "PBH immediately determines stabilizability (if uncontrollable modes have Re(lambda) < 0)",
+            ],
+            "rubric": {"numerical_ill_conditioning": 2.0, "uncontrollable_mode_identification": 2.0, "stabilizability": 1.0},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_003",
+        "pillar": "theory_and_concepts",
+        "topic": "non_minimum_phase_systems",
+        "prompt": "Why do Right-Half-Plane (RHP) zeros impose fundamental performance limitations in feedback control systems? Explain using the Poisson Integral formula or Bode sensitivity integral (waterbed effect).",
+        "ground_truth": {
+            "key_concepts": [
+                "RHP zeros cause initial undershoot in step response",
+                "Bode sensitivity integral (waterbed effect): reduction of sensitivity |S(jw)| at low frequencies forces amplification elsewhere",
+                "RHP zero at z requires closed-loop bandwidth to be bounded below approximately z/2",
+                "Cannot invert RHP zeros without creating unstable closed-loop pole-zero cancelations",
+            ],
+            "rubric": {"undershoot_explanation": 1.5, "waterbed_effect": 2.0, "bandwidth_limitation": 1.5},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_004",
+        "pillar": "theory_and_concepts",
+        "topic": "lyapunov_stability",
+        "prompt": "Explain the fundamental difference between Lyapunov's Indirect Method (linearization) and Lyapunov's Direct Method. What are the limitations of indirect linearization regarding asymptotic stability and domain of attraction?",
+        "ground_truth": {
+            "key_concepts": [
+                "Indirect method: linearizes Jacobian at equilibrium; Re(lambda) < 0 implies local asymptotic stability",
+                "Indirect method fails / is inconclusive if any eigenvalue has Re(lambda) = 0 (critical cases)",
+                "Indirect method provides no information on domain of attraction (valid only in an infinitesimal neighborhood)",
+                "Direct method: constructs positive-definite V(x) with negative semi-definite or negative definite V_dot; valid globally or over an estimated invariant set",
+            ],
+            "rubric": {"indirect_definition": 1.5, "zero_real_part_limitation": 1.5, "domain_of_attraction": 2.0},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_005",
+        "pillar": "theory_and_concepts",
+        "topic": "separation_principle",
+        "prompt": "State the Separation Principle for Linear-Quadratic-Gaussian (LQG) control. Under what conditions does it hold, and why does LQG lack the guaranteed robustness margins of deterministic LQR?",
+        "ground_truth": {
+            "key_concepts": [
+                "Separation principle: optimal controller decomposes into deterministic LQR state feedback K and optimal Kalman state observer L independently",
+                "Closed-loop eigenvalues are exactly the union of LQR poles and observer poles",
+                "Doyle (1978) showed that LQG has no guaranteed gain or phase margins (can have arbitrarily small gain margin)",
+                "Observer loop recovery (LTR) is required to restore LQR robustness",
+            ],
+            "rubric": {"separation_definition": 2.0, "doyle_counterexample_robustness": 2.0, "ltr_context": 1.0},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_006",
+        "pillar": "theory_and_concepts",
+        "topic": "discrete_vs_continuous_stability",
+        "prompt": "How does the stability boundary differ between continuous-time LTI systems and discrete-time LTI systems? What conformal mapping connects the continuous s-plane to the discrete z-plane, and what happens to imaginary axis poles under exact discretization?",
+        "ground_truth": {
+            "key_concepts": [
+                "Continuous stability: Re(s) < 0 (left-half plane)",
+                "Discrete stability: |z| < 1 (strictly inside the unit circle)",
+                "Conformal mapping: z = e^(s * Ts)",
+                "Imaginary axis s = j*omega maps onto the unit circle |z| = 1 at angle omega * Ts",
+            ],
+            "rubric": {"boundary_definitions": 2.0, "exponential_mapping": 1.5, "imaginary_axis_mapping": 1.5},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_007",
+        "pillar": "theory_and_concepts",
+        "topic": "internal_model_principle",
+        "prompt": "What is the Internal Model Principle (Francis and Wonham)? Explain why an integrator is required in the feedback loop to achieve zero steady-state error for a step reference or constant disturbance.",
+        "ground_truth": {
+            "key_concepts": [
+                "Internal Model Principle: To asymptotically track or reject a class of exogenous signals without steady-state error, the feedback loop must contain a dynamic model of that signal generator",
+                "A step reference/disturbance is generated by 1/s; hence the loop must contain a pole at s=0 (integrator)",
+                "A sinusoidal reference sin(w*t) requires loop to contain 1/(s^2 + w^2)",
+                "Provides structural robustness against plant parameter variations",
+            ],
+            "rubric": {"francis_wonham_definition": 2.0, "integrator_step_case": 1.5, "harmonic_signal_case": 1.5},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_008",
+        "pillar": "theory_and_concepts",
+        "topic": "lqr_robustness_margins",
+        "prompt": "What are the guaranteed classical stability margins for continuous-time Linear Quadratic Regulators (LQR) with diagonal R matrix? State both the gain margin and phase margin guarantees.",
+        "ground_truth": {
+            "key_concepts": [
+                "Guaranteed Gain Margin: GM in [1/2, infinity) (or -6 dB to +infinity dB)",
+                "Guaranteed Phase Margin: PM >= 60 degrees (at least +/- 60 deg)",
+                "Result stems from Kalman inequality (return difference inequality): ||I + R^(1/2) K (sI-A)^(-1) B R^(-1/2)|| >= 1 for s=jw",
+            ],
+            "rubric": {"gain_margin_values": 2.0, "phase_margin_values": 2.0, "kalman_inequality_origin": 1.0},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_009",
+        "pillar": "theory_and_concepts",
+        "topic": "small_gain_vs_passivity",
+        "prompt": "Contrast the Small Gain Theorem with the Passivity Theorem in nonlinear and robust feedback control. When is passivity preferred over small-gain?",
+        "ground_truth": {
+            "key_concepts": [
+                "Small Gain Theorem: requires norm product ||G1|| * ||G2|| < 1; gain-based, conservative when loop gain is large at low frequencies",
+                "Passivity Theorem: requires positive realness / passivity (Re <u, y> >= 0); phase-based, independent of gain magnitude",
+                "Passivity is preferred in physical systems (mechanical, electrical, robotics) with energy storage and collocated actuators/sensors where infinite gain margin is achievable",
+            ],
+            "rubric": {"small_gain_definition": 1.5, "passivity_definition": 1.5, "physical_robotics_preference": 2.0},
+        },
+    })
+
+    items.append({
+        "id": "cb_theory_010",
+        "pillar": "theory_and_concepts",
+        "topic": "bode_gain_phase_relationship",
+        "prompt": "Explain Bode's Gain-Phase Relationship for stable minimum-phase systems. What does a -20 dB/decade slope in magnitude imply for the phase at that frequency?",
+        "ground_truth": {
+            "key_concepts": [
+                "Bode's Gain-Phase theorem: phase angle is uniquely determined by the logarithmic derivative of magnitude with respect to log frequency over all frequencies",
+                "A constant magnitude slope of -20 dB/decade (-1 log slope) corresponds to approximately -90 degrees of phase shift",
+                "A slope of -40 dB/decade corresponds to approximately -180 degrees (stability crossover hazard)",
+                "Applies only to minimum-phase systems (no RHP zeros or delays)",
+            ],
+            "rubric": {"gain_phase_integral": 1.5, "slope_phase_correspondence": 2.0, "minimum_phase_condition": 1.5},
+        },
+    })
+
+    # =========================================================================
+    # PILLAR 2: DETERMINISTIC NUMERICAL SYNTHESIS & VERIFICATION (12 items)
+    # =========================================================================
+    items.append({
+        "id": "cb_num_001",
+        "pillar": "numerical_synthesis",
+        "topic": "exact_zoh_discretization",
+        "prompt": "Discretize the continuous plant with A=[[0, 1], [-4, -5]], B=[[0], [2]] under exact Zero-Order Hold (ZOH) at sample time Ts=0.1 s. Report the discrete matrices Ad and Bd.",
+        "ground_truth": {
+            "tool_call": "exact_zoh",
+            "arguments": {"A": [[0, 1], [-4, -5]], "B": [[0], [2]], "Ts": 0.1},
+            "expected_numeric": {
+                "Ad": [[0.9814, 0.0772], [-0.3087, 0.5955]],
+                "Bd": [[0.0093], [0.1543]],
+            },
+            "tolerance": 1e-3,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_002",
+        "pillar": "numerical_synthesis",
+        "topic": "continuous_lqr",
+        "prompt": "Design a continuous-time LQR state feedback controller for system A=[[0, 1], [-2, -3]], B=[[0], [1]] with state weighting Q=[[10, 0], [0, 1]] and control penalty R=[[1]]. Compute the Riccati matrix P, gain K, and closed-loop poles.",
+        "ground_truth": {
+            "tool_call": "continuous_lqr",
+            "arguments": {"A": [[0, 1], [-2, -3]], "B": [[0], [1]], "Q": [[10, 0], [0, 1]], "R": [[1]]},
+            "expected_numeric": {
+                "P": [[7.7392, 1.7417], [1.7417, 0.6720]],
+                "K": [[1.7417, 0.6720]],
+            },
+            "tolerance": 1e-3,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_003",
+        "pillar": "numerical_synthesis",
+        "topic": "discrete_lqr",
+        "prompt": "Compute the discrete-time LQR state feedback gain for plant Ad=[[1.0, 0.1], [0.0, 0.95]], Bd=[[0.005], [0.1]] with weights Q=[[5, 0], [0, 1]] and R=[[0.5]]. Report the DARE Riccati matrix P and discrete feedback gain K.",
+        "ground_truth": {
+            "tool_call": "discrete_lqr",
+            "arguments": {"A": [[1.0, 0.1], [0.0, 0.95]], "B": [[0.005], [0.1]], "Q": [[5, 0], [0, 1]], "R": [[0.5]]},
+            "tolerance": 1e-3,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_004",
+        "pillar": "numerical_synthesis",
+        "topic": "cbf_safety_filter",
+        "prompt": "A single integrator x_dot = u has a state limit x >= -1.0. With barrier h(x) = x - x_min, apply the CBF forward-invariance condition with alpha = 1.5. If the current state is x = -0.7 and nominal control is u_nom = -3.0, compute the filtered safe control input u.",
+        "ground_truth": {
+            "tool_call": "cbf_safety_filter",
+            "arguments": {"x": -0.7, "u_nom": -3.0, "alpha": 1.5, "x_min": -1.0},
+            "expected_numeric": {"u_safe": -0.45, "h": 0.3},
+            "tolerance": 1e-3,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_005",
+        "pillar": "numerical_synthesis",
+        "topic": "dynamic_inversion",
+        "prompt": "For the scalar nonlinear affine system x_dot = 0.5*x + 2.0*u, design a dynamic inversion control input u to track setpoint r = 3.0 from state x = 1.0 with tracking convergence gain k = 4.0.",
+        "ground_truth": {
+            "tool_call": "dynamic_inversion",
+            "arguments": {"a": 0.5, "b": 2.0, "x": 1.0, "reference": 3.0, "gain": 4.0},
+            "expected_numeric": {"control_input_u": 3.75, "virtual_control_v": 8.0},
+            "tolerance": 1e-3,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_006",
+        "pillar": "numerical_synthesis",
+        "topic": "kharitonov_stability",
+        "prompt": "A cubic interval polynomial has ascending-power coefficient bounds lower_bounds=[2.0, 3.0, 4.0, 1.0] and upper_bounds=[2.5, 3.5, 4.5, 1.2]. Apply Kharitonov's Theorem to test whether the system is robustly Hurwitz stable.",
+        "ground_truth": {
+            "tool_call": "kharitonov_stability_test",
+            "arguments": {"lower_bounds": [2.0, 3.0, 4.0, 1.0], "upper_bounds": [2.5, 3.5, 4.5, 1.2]},
+            "expected_numeric": {"is_robustly_hurwitz": True},
+        },
+    })
+
+    items.append({
+        "id": "cb_num_007",
+        "pillar": "numerical_synthesis",
+        "topic": "control_allocation",
+        "prompt": "Given a 3-actuator redundant control effectiveness matrix B=[1.0, 2.0, 3.0], compute the minimum 2-norm control allocation vector u that produces virtual torque tau = 28.0.",
+        "ground_truth": {
+            "tool_call": "minimum_norm_control_allocation",
+            "arguments": {"B": [1.0, 2.0, 3.0], "desired_tau": 28.0},
+            "expected_numeric": {"u": [2.0, 4.0, 6.0]},
+            "tolerance": 1e-3,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_008",
+        "pillar": "numerical_synthesis",
+        "topic": "kalman_measurement_update",
+        "prompt": "Perform a discrete Kalman filter measurement update for state prediction x_minus=[2.0, 0.0] and covariance P_minus=[[1.0, 0.0], [0.0, 1.0]] with measurement matrix H=[[1.0, 0.0]], measurement noise R=[[0.2]], and observed measurement z=[2.6]. Report the Kalman gain K and updated state x_plus.",
+        "ground_truth": {
+            "tool_call": "kalman_measurement_update",
+            "arguments": {
+                "x_minus": [2.0, 0.0],
+                "P_minus": [[1.0, 0.0], [0.0, 1.0]],
+                "H": [[1.0, 0.0]],
+                "R": [[0.2]],
+                "z": [2.6],
+            },
+            "expected_numeric": {"kalman_gain_K": [[0.8333], [0.0]], "x_plus_updated": [2.5, 0.0]},
+            "tolerance": 1e-2,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_009",
+        "pillar": "numerical_synthesis",
+        "topic": "arx_least_squares",
+        "prompt": "Estimate parameters theta = [a, b]^T for regressor matrix Phi=[[1.0, 2.0], [2.0, 1.0], [3.0, 4.0]] and output Y=[[5.0], [4.0], [11.0]] using ordinary least squares.",
+        "ground_truth": {
+            "tool_call": "least_squares_arx",
+            "arguments": {
+                "Phi": [[1.0, 2.0], [2.0, 1.0], [3.0, 4.0]],
+                "Y": [[5.0], [4.0], [11.0]],
+            },
+            "expected_numeric": {"theta_estimated": [[1.0], [2.0]]},
+            "tolerance": 1e-2,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_010",
+        "pillar": "numerical_synthesis",
+        "topic": "pole_placement",
+        "prompt": "Compute state feedback gain K for system A=[[0, 1], [-2, -3]], B=[[0], [1]] to place closed-loop poles at [-4.0, -5.0].",
+        "ground_truth": {
+            "tool_call": "place_state_feedback",
+            "arguments": {"A": [[0, 1], [-2, -3]], "B": [[0], [1]], "desired_poles": [-4.0, -5.0]},
+            "expected_numeric": {"K": [[18.0, 6.0]]},
+            "tolerance": 1e-2,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_011",
+        "pillar": "numerical_synthesis",
+        "topic": "pid_tuning_fopdt",
+        "prompt": "A temperature process has static gain K=2.5, time constant tau=10.0 s, and delay L=2.0 s. Tune a PID controller for 0% overshoot setpoint tracking using the Chien-Hrones-Reswick (CHR) method.",
+        "ground_truth": {
+            "tool_call": "pid_tune_fopdt",
+            "arguments": {"K_plant": 2.5, "T_tau": 10.0, "L_delay": 2.0, "tuning_objective": "setpoint_tracking_0_overshoot"},
+            "expected_numeric": {"Kp": 1.2, "Ki": 0.12, "Kd": 1.2},
+            "tolerance": 1e-2,
+        },
+    })
+
+    items.append({
+        "id": "cb_num_012",
+        "pillar": "numerical_synthesis",
+        "topic": "lyapunov_continuous",
+        "prompt": "Solve the continuous Lyapunov equation A^T P + P A = -Q for stable matrix A=[[-2, 1], [0, -3]] with identity state weight Q=[[1, 0], [0, 1]].",
+        "ground_truth": {
+            "tool_call": "solve_lyapunov",
+            "arguments": {"A": [[-2, 1], [0, -3]], "Q": [[1, 0], [0, 1]], "discrete": False},
+            "expected_numeric": {"P": [[0.25, 0.05], [0.05, 0.1833]]},
+            "tolerance": 1e-2,
+        },
+    })
+
+    # =========================================================================
+    # PILLAR 3: EXECUTABLE CODE & SIMULATION (10 items)
+    # =========================================================================
+    items.append({
+        "id": "cb_code_001",
+        "pillar": "code_and_simulation",
+        "topic": "cvxpy_mpc_qp",
+        "prompt": "Write a clean, runnable Python script using CVXPY to solve a finite-horizon MPC quadratic program for double integrator Ad=[[1.0, 0.1], [0.0, 1.0]], Bd=[[0.0], [0.1]], Q=diag([10, 1]), R=0.1, initial state x0=[2.0, 0.0], horizon N=10, with input constraint |u| <= 1.0. Include assertions verifying solver optimality.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["cvxpy", "numpy"],
+            "must_execute_cleanly": True,
+            "must_contain_assertions": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_002",
+        "pillar": "code_and_simulation",
+        "topic": "step_response_transients",
+        "prompt": "Write a Python script using scipy.signal to compute the step response of G(s) = 25 / (s^2 + 6s + 25). Calculate and assert that the natural frequency omega_n = 5.0 rad/s, damping ratio zeta = 0.6, and peak overshoot Mp% is approximately 9.5%.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["scipy", "numpy"],
+            "must_execute_cleanly": True,
+            "must_contain_assertions": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_003",
+        "pillar": "code_and_simulation",
+        "topic": "bode_stability_margins",
+        "prompt": "Write a Python script using scipy.signal to compute the Gain Margin, Phase Margin, and crossover frequencies for open-loop transfer function L(s) = 10 / (s*(s + 1)*(s + 2)). Assert that Gain Margin is 6.0 dB and system is stable.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["scipy", "numpy"],
+            "must_execute_cleanly": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_004",
+        "pillar": "code_and_simulation",
+        "topic": "kalman_simulation_loop",
+        "prompt": "Write a Python simulation script for a discrete 1D random walk x[k+1] = x[k] + w[k], y[k] = x[k] + v[k] with Q=0.1, R=1.0 over 50 steps. Implement the predict and update steps, and assert that estimation error covariance P converges to a steady-state value.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["numpy"],
+            "must_execute_cleanly": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_005",
+        "pillar": "code_and_simulation",
+        "topic": "feedback_linearization_sim",
+        "prompt": "Write a Python script implementing feedback linearization for an inverted pendulum on a motor: theta_ddot = 9.81*sin(theta) + u. Choose control u to achieve linear target dynamics theta_ddot + 4*theta_dot + 4*theta = 0. Simulate from theta(0)=0.5 rad and assert asymptotic convergence to 0.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["scipy", "numpy"],
+            "must_execute_cleanly": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_006",
+        "pillar": "code_and_simulation",
+        "topic": "state_space_realization",
+        "prompt": "Write a Python script to convert state space A=[[0, 1], [-2, -3]], B=[[0], [1]], C=[[1, 0]], D=[[0]] into transfer function G(s) using scipy.signal.ss2tf. Assert numerator is [1.0] and denominator is [1.0, 3.0, 2.0].",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["scipy", "numpy"],
+            "must_execute_cleanly": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_007",
+        "pillar": "code_and_simulation",
+        "topic": "matlab_zoh_discretization",
+        "prompt": "Write a clean MATLAB script that defines continuous state-space matrices A=[0 1; -4 -5], B=[0; 2], C=[1 0], D=[0], discretizes them at Ts=0.05 s using c2d(sys, Ts, 'zoh'), extracts Ad and Bd with ssdata, and asserts Ad has size [2, 2].",
+        "ground_truth": {
+            "language": "matlab",
+            "must_contain_matlab_syntax": ["c2d", "ss", "ssdata", "assert"],
+        },
+    })
+
+    items.append({
+        "id": "cb_code_008",
+        "pillar": "code_and_simulation",
+        "topic": "routh_hurwitz_code",
+        "prompt": "Write a Python function to construct the Routh array for polynomial s^3 + 2s^2 + 3s + K. Test with K=4 (stable) and K=8 (unstable) and assert correct stability determination.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["numpy"],
+            "must_execute_cleanly": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_009",
+        "pillar": "code_and_simulation",
+        "topic": "discrete_observer_design",
+        "prompt": "Write a Python script to design a discrete Luenberger observer for plant Ad=[[0.8, 0.1], [0.0, 0.7]], C=[[1.0, 0.0]] placing observer poles at [0.2, 0.3] using scipy.signal.place_poles. Assert error dynamics eig(Ad - L*C) matches target.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["scipy", "numpy"],
+            "must_execute_cleanly": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_code_010",
+        "pillar": "code_and_simulation",
+        "topic": "control_allocation_qp",
+        "prompt": "Write a Python script using CVXPY to solve control allocation for 4 thrusters B=[[1, 1, 1, 1], [1, -1, 1, -1]] with desired torque tau=[10.0, 0.0] and actuator thrust saturation 0 <= u_i <= 4.0. Assert solver finds optimal feasible thrust allocation.",
+        "ground_truth": {
+            "language": "python",
+            "required_packages": ["cvxpy", "numpy"],
+            "must_execute_cleanly": True,
+        },
+    })
+
+    # =========================================================================
+    # PILLAR 4: UNDERSPECIFICATION, TRAPS & SAFETY GATING (10 items)
+    # =========================================================================
+    items.append({
+        "id": "cb_trap_001",
+        "pillar": "underspecified_and_traps",
+        "topic": "missing_sample_time",
+        "prompt": "Discretize the continuous plant with A=[[0, 1], [-2, -3]], B=[[0], [1]] using exact zero-order hold.",
+        "ground_truth": {
+            "expected_behavior": "refusal_and_clarification",
+            "missing_parameters": ["sampling_time_Ts"],
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_002",
+        "pillar": "underspecified_and_traps",
+        "topic": "missing_lqr_weights",
+        "prompt": "Design an optimal continuous-time LQR controller for plant A=[[0, 1], [-1, -2]], B=[[0], [1]].",
+        "ground_truth": {
+            "expected_behavior": "refusal_and_clarification",
+            "missing_parameters": ["state_weight_Q", "control_penalty_R"],
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_003",
+        "pillar": "underspecified_and_traps",
+        "topic": "missing_pid_model",
+        "prompt": "Tune the PID gains Kp, Ki, and Kd for my DC motor.",
+        "ground_truth": {
+            "expected_behavior": "refusal_and_clarification",
+            "missing_parameters": ["plant_transfer_function_or_parameters"],
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_004",
+        "pillar": "underspecified_and_traps",
+        "topic": "uncontrollable_system_trap",
+        "prompt": "Compute state feedback gain K to place closed-loop poles at [-1, -2] for system A=[[1, 0], [0, 2]], B=[[1], [0]].",
+        "ground_truth": {
+            "expected_behavior": "error_detection_and_refusal",
+            "reason": "System is uncontrollable: second state x2 has zero input coupling and unstable pole at +2.",
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_005",
+        "pillar": "underspecified_and_traps",
+        "topic": "unobservable_observer_trap",
+        "prompt": "Design a Luenberger observer with poles at [-5, -6] for system A=[[0, 1], [0, 2]], C=[[0, 0]].",
+        "ground_truth": {
+            "expected_behavior": "error_detection_and_refusal",
+            "reason": "System is completely unobservable (C matrix is all zeros).",
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_006",
+        "pillar": "underspecified_and_traps",
+        "topic": "discrete_hurwitz_trap",
+        "prompt": "Use the Routh-Hurwitz criterion directly on the discrete-time characteristic polynomial p(z) = z^2 - 1.5z + 0.7 to check stability inside the unit circle.",
+        "ground_truth": {
+            "expected_behavior": "conceptual_correction",
+            "reason": "Routh-Hurwitz tests left-half plane stability (Re(s)<0). For discrete polynomials (unit circle |z|<1), one must either apply the Jury stability test or perform a bilinear transformation z = (1+w)/(1-w) before Routh.",
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_007",
+        "pillar": "underspecified_and_traps",
+        "topic": "zero_control_authority_trap",
+        "prompt": "Compute the nonlinear dynamic inversion input u to track r=1.0 for system x_dot = -x + 0.0*u.",
+        "ground_truth": {
+            "expected_behavior": "error_detection_and_refusal",
+            "reason": "Control effectiveness b = 0; system has zero control authority and cannot be inverted.",
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_008",
+        "pillar": "underspecified_and_traps",
+        "topic": "invalid_covariance_matrix_trap",
+        "prompt": "Run a Kalman measurement update with prior error covariance P_minus=[[-1.0, 0.0], [0.0, -2.0]].",
+        "ground_truth": {
+            "expected_behavior": "error_detection_and_refusal",
+            "reason": "Covariance matrix P must be positive semi-definite (eigenvalues >= 0). Negative eigenvalues represent impossible negative variance.",
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_009",
+        "pillar": "underspecified_and_traps",
+        "topic": "missing_mpc_specifications",
+        "prompt": "Solve the MPC quadratic program for my system to regulate state to origin.",
+        "ground_truth": {
+            "expected_behavior": "refusal_and_clarification",
+            "missing_parameters": ["state_matrix_A", "input_matrix_B", "weights_Q_R", "horizon_N"],
+            "must_not_hallucinate": True,
+        },
+    })
+
+    items.append({
+        "id": "cb_trap_010",
+        "pillar": "underspecified_and_traps",
+        "topic": "impossible_pole_placement_delay",
+        "prompt": "Place all closed-loop poles at s = -100 for a continuous system with 500 ms pure time delay e^(-0.5s).",
+        "ground_truth": {
+            "expected_behavior": "engineering_critique_and_refusal",
+            "reason": "Time delay introduces infinite dimensional dynamics with negative phase lag; attempting ultra-fast bandwidth (s = -100) on a 500 ms delay violates phase crossover and induces severe instability.",
+            "must_not_hallucinate": True,
+        },
+    })
+
+    # =========================================================================
+    # PILLAR 5: REAL-WORLD ENGINEERING CASE STUDIES (8 items)
+    # =========================================================================
+    items.append({
+        "id": "cb_case_001",
+        "pillar": "real_world_case_studies",
+        "topic": "inverted_pendulum_cart",
+        "prompt": "For an inverted pendulum on a cart with cart mass M=1.0 kg, pendulum mass m=0.1 kg, length l=0.5 m, and g=9.81 m/s^2: linearize the equations of motion around the upright equilibrium (theta=0, x=0), state the continuous matrices (A, B), and formulate the LQR CARE problem.",
+        "ground_truth": {
+            "linearized_model": "x = [p, p_dot, theta, theta_dot]^T",
+            "eigenvalues": "contains one unstable RHP pole at sqrt(g*(M+m)/(M*l)) approx +4.64 rad/s",
+            "lqr_formulation": "Requires Q >= 0, R > 0 with CARE solve",
+        },
+    })
+
+    items.append({
+        "id": "cb_case_002",
+        "pillar": "real_world_case_studies",
+        "topic": "dc_motor_servo",
+        "prompt": "Derive the state-space representation for an armature-controlled DC motor with armature resistance R=2.0 ohm, inductance L=0.01 H, torque constant Kt=0.05 N*m/A, back-EMF constant Ke=0.05 V/(rad/s), rotor inertia J=0.001 kg*m^2, and viscous friction b=0.0001 N*m*s/rad. State vector is x = [theta, omega, i_a]^T and input is armature voltage V.",
+        "ground_truth": {
+            "equations": [
+                "theta_dot = omega",
+                "omega_dot = (Kt/J)*i_a - (b/J)*omega",
+                "i_a_dot = (1/L)*V - (R/L)*i_a - (Ke/L)*omega",
+            ],
+            "dimension": "3x3 state matrix A, 3x1 input matrix B",
+        },
+    })
+
+    items.append({
+        "id": "cb_case_003",
+        "pillar": "real_world_case_studies",
+        "topic": "quadrotor_attitude_control",
+        "prompt": "For a quadrotor UAV attitude dynamics in body frame: J * omega_dot + omega x (J * omega) = tau. Under small angles (hover), state the decoupled roll-pitch-yaw equations of motion and design a PD attitude controller tau_phi = Kp*(phi_des - phi) - Kd*p.",
+        "ground_truth": {
+            "decoupled_hover": "I_xx * phi_ddot = tau_phi, I_yy * theta_ddot = tau_theta, I_zz * psi_ddot = tau_psi",
+            "pd_closed_loop": "phi_ddot + (Kd/I_xx)*phi_dot + (Kp/I_xx)*phi = (Kp/I_xx)*phi_des",
+            "second_order_tuning": "Kp = I_xx * omega_n^2, Kd = 2 * I_xx * zeta * omega_n",
+        },
+    })
+
+    items.append({
+        "id": "cb_case_004",
+        "pillar": "real_world_case_studies",
+        "topic": "quarter_car_suspension",
+        "prompt": "Formulate the 2-DOF state-space model for a quarter-car active suspension with sprung mass m_s, unsprung mass m_u, suspension spring k_s, suspension damper c_s, tire stiffness k_t, and active actuator force u. Define the state vector and write the equations of motion.",
+        "ground_truth": {
+            "states": "x = [z_s - z_u, z_s_dot, z_u - z_r, z_u_dot]^T",
+            "sprung_eom": "m_s * z_s_ddot = -k_s*(z_s - z_u) - c_s*(z_s_dot - z_u_dot) + u",
+            "unsprung_eom": "m_u * z_u_ddot = k_s*(z_s - z_u) + c_s*(z_s_dot - z_u_dot) - k_t*(z_u - z_r) - u",
+        },
+    })
+
+    items.append({
+        "id": "cb_case_005",
+        "pillar": "real_world_case_studies",
+        "topic": "hdd_voice_coil_actuator",
+        "prompt": "A hard disk drive voice coil motor positioning head is modeled as a double integrator G(s) = K_v / s^2 with high-frequency resonant modes. Explain why a Notch Filter is placed in series with the lead-lag/PID compensator in the loop.",
+        "ground_truth": {
+            "resonance_issue": "Mechanical structural resonance causes high peak gain and phase drop, destabilizing the high-bandwidth track-following loop",
+            "notch_filter_role": "N(s) = (s^2 + 2*zeta_z*w_n*s + w_n^2)/(s^2 + 2*zeta_p*w_n*s + w_n^2) introduces narrow deep attenuation at resonant frequency w_n without reducing low-frequency loop gain",
+        },
+    })
+
+    items.append({
+        "id": "cb_case_006",
+        "pillar": "real_world_case_studies",
+        "topic": "flexible_joint_robot",
+        "prompt": "A single-link robot with flexible joint is modeled by motor inertia J_m, link inertia J_l, joint torsional stiffness k, and gear damping b. State why this 4th-order system exhibits non-collocated sensor/actuator dynamics if position is measured at the link tip while torque is applied at the motor.",
+        "ground_truth": {
+            "collocation": "Collocated (measuring motor position): interlaced alternating poles and zeros on imaginary axis, always passive and easily stabilized",
+            "non_collocated": "Measuring link tip: transfer function has only poles and no minimum-phase zeros in the mid-frequency range, leading to 360 deg phase lag and severe stability limits",
+        },
+    })
+
+    items.append({
+        "id": "cb_case_007",
+        "pillar": "real_world_case_studies",
+        "topic": "aircraft_pitch_autopilot",
+        "prompt": "For an aircraft short-period longitudinal dynamics: alpha_dot = Z_alpha * alpha + q, q_dot = M_alpha * alpha + M_q * q + M_delta_e * delta_e. Explain the role of Pitch Rate (q) feedback (Pitch Damper) in augmenting short-period damping ratio zeta_sp.",
+        "ground_truth": {
+            "short_period_characteristic": "s^2 - (M_q + Z_alpha)*s + (M_q*Z_alpha - M_alpha) = 0",
+            "pitch_damper_law": "delta_e = -K_q * q",
+            "damping_augmentation": "Increases the effective M_q derivative (M_q_effective = M_q - M_delta_e * K_q), directly shifting the linear s coefficient and boosting zeta_sp",
+        },
+    })
+
+    items.append({
+        "id": "cb_case_008",
+        "pillar": "real_world_case_studies",
+        "topic": "maglev_stabilization",
+        "prompt": "A magnetic levitation system m*y_ddot = m*g - k*(i/y)^2 is open-loop unstable with linearization transfer function G(s) = -K_m / (s^2 - a^2). Explain why pure proportional feedback cannot stabilize this system and design a stabilizing Lead Compensator C(s) = K_c * (s + z)/(s + p).",
+        "ground_truth": {
+            "root_locus_failure": "Open-loop poles at s = +a and s = -a. Under pure proportional control, closed-loop poles move along imaginary axis from +/- a towards infinity, remaining on stability boundary with 0 damping",
+            "lead_compensator_action": "Placing zero z < a and pole p > a pulls root locus branches into the left-half plane, providing phase lead at crossover frequency and ensuring asymptotic stability",
+        },
+    })
+
+    BENCHMARK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with BENCHMARK_PATH.open("w", encoding="utf-8") as f:
+        for item in items:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+    print(f"ControlBench v1 successfully built: {len(items)} items written to {BENCHMARK_PATH}")
+
+
+if __name__ == "__main__":
+    build_controlbench()

@@ -1,0 +1,36 @@
+# Project-specific Python environment
+.venv/
+env/
+venv/
+
+# Python-generated cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+
+# macOS Finder metadata
+.DS_Store
+._*
+
+# Downloaded and generated data, books, and large corpora
+data/
+*.pdf
+*.djvu
+*.epub
+
+# Model checkpoints and fine-tuned weights
+adapters/
+checkpoints/
+
+# Generated simulation outputs & plot images
+outputs/
+*.png
+*.jpg
+*.jpeg
+*.svg
+benchmarks/responses/*.jsonl
+*.part
+
+# Temporary handoff logs
+*HANDOFF*.md

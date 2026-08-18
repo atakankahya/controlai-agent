@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ControlAI</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- KaTeX for LaTeX formulas -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  
+  <!-- Marked for Markdown parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+  
+  <!-- Highlight.js for Code Syntax Highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/matlab.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+  
+  <link rel="stylesheet" href="/static/app.css?v=20260818_syntax_highlight">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Left Sidebar (Collapsible) -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <button id="btn-new-chat" class="btn-new-chat">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>New Chat</span>
+        </button>
+      </div>
+
+      <!-- Chat History List -->
+      <div class="sidebar-history">
+        <div class="history-label">Recent Chats</div>
+        <div id="history-list" class="history-list">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <!-- Sidebar Bottom Actions -->
+      <div class="sidebar-footer">
+        <button id="btn-upload-modal" class="sidebar-footer-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          <span>Add Knowledge</span>
+        </button>
+
+        <button id="btn-settings-modal" class="sidebar-footer-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Settings</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <div class="main-content">
+      <!-- Navbar -->
+      <header class="navbar">
+        <div class="navbar-left">
+          <button id="btn-sidebar-toggle" class="btn-nav-icon" title="Toggle Sidebar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <span class="brand-title">ControlAI</span>
+        </div>
+
+        <div class="navbar-right">
+          <!-- Theme Toggle -->
+          <button id="btn-theme-toggle" class="btn-nav-icon" title="Toggle Theme">
+            <svg class="sun-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg class="moon-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Scrollable Chat Viewport (Full width: scrollbar is at the far right edge of viewport) -->
+      <div id="chat-viewport" class="chat-viewport">
+        <main id="chat-thread" class="chat-thread">
+          <!-- Hero Welcome -->
+          <div class="hero-container" id="hero-container">
+            <div class="hero-title">ControlAI</div>
+            <div class="hero-subtitle">Control Systems &bull; Computational Python &bull; Mathematical Simulation</div>
+
+            <div class="preset-cards">
+              <div class="preset-card" data-prompt="Design an LQR controller for A=[[0, 1], [-2, -3]], B=[[0], [1]], Q=diag([10, 1]), R=1 and simulate the step response.">
+                <div class="preset-heading">Optimal LQR Synthesis</div>
+                <div class="preset-detail">Solve CARE, calculate feedback gain K, and simulate closed-loop response.</div>
+              </div>
+              <div class="preset-card" data-prompt="Write and run a Python script to simulate and plot the step response of a second order system with damping ratio zeta=0.6 and natural frequency wn=1.4 rad/s.">
+                <div class="preset-heading">Second-Order Simulation</div>
+                <div class="preset-detail">Execute Python ODE simulation and generate step response plot.</div>
+              </div>
+              <div class="preset-card" data-prompt="Compute the Gain Margin, Phase Margin, and crossover frequencies for G(s) = 10 / (s*(s+1)*(s+5)).">
+                <div class="preset-heading">Stability Margins</div>
+                <div class="preset-detail">Frequency response, phase margin, gain margin, and Bode plot.</div>
+              </div>
+              <div class="preset-card" data-prompt="Discretize A=[[0, 1], [-4, -2]], B=[[0], [2]] with Ts=0.05s using exact Zero-Order Hold (ZOH).">
+                <div class="preset-heading">Exact ZOH Discretization</div>
+                <div class="preset-detail">Matrix exponential Van Loan calculation for discrete Ad, Bd.</div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      <!-- Fixed Bottom Input Container -->
+      <footer class="input-container">
+        <div class="input-wrapper">
+          <!-- Math & Matrix Helper Toolbar -->
+          <div class="math-toolbar">
+            <button type="button" class="math-btn" data-insert="A = [[0, 1], [-2, -3]]" title="Insert 2x2 Matrix">Matrix 2x2</button>
+            <button type="button" class="math-btn" data-insert="A = [[0, 1, 0], [0, 0, 1], [-6, -11, -6]]" title="Insert 3x3 Matrix">Matrix 3x3</button>
+            <button type="button" class="math-btn" data-insert="B = [[0], [1]]" title="Insert Input Vector">B Vector</button>
+            <button type="button" class="math-btn" data-insert="^2" title="Superscript / Power">x²</button>
+            <button type="button" class="math-btn" data-insert="_1" title="Subscript">x₁</button>
+            <button type="button" class="math-btn" data-insert=" / " title="Fraction">Fraction</button>
+            <button type="button" class="math-btn" data-insert="\sqrt{x}" title="Square Root">√</button>
+            <button type="button" class="math-btn" data-insert="\sum_{i=1}^{n}" title="Summation">∑</button>
+            <button type="button" class="math-btn" data-insert="\int_{0}^{t}" title="Integral">∫</button>
+            <button type="button" class="math-btn" data-insert="\omega_n" title="Natural Frequency">ω_n</button>
+            <button type="button" class="math-btn" data-insert="\zeta" title="Damping Ratio">ζ</button>
+            <button type="button" class="math-btn" data-insert="T_s = 0.1" title="Sample Time">Ts</button>
+            <button type="button" class="math-btn" data-insert="plot " title="Plot command">Plot</button>
+          </div>
+
+          <!-- Attachment Preview Badge -->
+          <div id="attachment-preview" class="attachment-preview" style="display: none;">
+            <div class="attachment-badge">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+              <span id="attachment-name">file.txt</span>
+              <button type="button" id="btn-remove-attachment" class="btn-remove-attachment">&times;</button>
+            </div>
+          </div>
+
+          <form id="chat-form" class="chat-input-box">
+            <!-- Text File Attachment Button -->
+            <button type="button" id="btn-attach-file" class="btn-attach" title="Attach Text / Script File (.txt, .py, .m, .csv, .md)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+            </button>
+            <input type="file" id="chat-file-input" accept=".txt,.py,.m,.csv,.json,.md" style="display: none;">
+
+            <textarea
+              id="chat-input"
+              placeholder="Ask a question, enter matrices, or type 'plot sin(x)'... (Shift+Enter for newline)"
+              rows="1"
+              required
+            ></textarea>
+
+            <button type="submit" id="btn-send" class="btn-send" title="Send (Enter)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            </button>
+          </form>
+          <div class="footer-note">SciPy / CVXPY / Python deterministic execution with verified numerical bounds.</div>
+        </div>
+      </footer>
+    </div>
+    </div>
+
+    <!-- Upload Modal -->
+    <div id="upload-modal" class="modal-backdrop">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Add Document to Knowledge Base</h3>
+          <button id="btn-close-upload-modal" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">Upload PDF, TXT, or MD documents. They will be indexed into the active reference library without restarting.</p>
+          <div id="modal-drop-zone" class="modal-drop-zone">
+            <div class="drop-text">Drag and drop file here, or click to browse</div>
+            <div class="drop-sub">Supported: .pdf, .txt, .md</div>
+            <input type="file" id="modal-file-input" accept=".pdf,.txt,.md" style="display: none;">
+          </div>
+          <div id="modal-upload-status" class="modal-upload-status"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings & Guide Modal -->
+    <div id="settings-modal" class="modal-backdrop">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Settings & Preferences</h3>
+          <button id="btn-close-settings-modal" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Text Size Setting -->
+          <div class="settings-section">
+            <div class="settings-title">Chat Font Size</div>
+            <p class="settings-desc">Adjust the reading text size across messages.</p>
+            <div class="font-size-options">
+              <button type="button" class="btn-font-size" data-size="13px">Small</button>
+              <button type="button" class="btn-font-size" data-size="15px">Default</button>
+              <button type="button" class="btn-font-size" data-size="17px">Large</button>
+              <button type="button" class="btn-font-size" data-size="19px">Extra Large</button>
+            </div>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="guide-section">
+            <div class="guide-title">Quick Guide</div>
+            <ul class="guide-list">
+              <li><strong>Matrices & State Space:</strong> Use the toolbar buttons or type <code>A=[[0, 1], [-2, -3]]</code> and <code>B=[[0], [1]]</code>.</li>
+              <li><strong>Python & Plotting:</strong> Ask the model to simulate ODEs, plot functions, or execute Jupyter-style Python computations.</li>
+              <li><strong>Exact LaTeX Math:</strong> All formulas are rendered in high-definition KaTeX notation.</li>
+              <li><strong>Attach Files:</strong> Click the paperclip icon to attach MATLAB/Python scripts or data files.</li>
+            </ul>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-section">
+            <div class="settings-title">Data Management</div>
+            <p class="settings-desc">Clear all saved chat sessions from this browser.</p>
+            <button id="btn-clear-chats" class="btn-danger">Clear All Chat History</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20260818_edge_scroll"></script>
+</body>
+</html>
