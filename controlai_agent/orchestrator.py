@@ -8,8 +8,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generator
 
-from mlx_lm import generate, load, stream_generate
-from transformers import AutoTokenizer
+import os
+import sys
+
+try:
+    from mlx_lm import generate as mlx_generate, load as mlx_load
+    HAS_MLX = True
+except ImportError:
+    HAS_MLX = False
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from controlai_agent.prompts import CONTROLAI_SYSTEM_PROMPT
 from controlai_agent.registry import ToolRegistry, registry
@@ -78,8 +86,7 @@ def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
                 calls.append(obj)
 
     # 3. Raw JSON object containing "name" and "arguments" / "parameters"
-    if not calls and '"name"' in text or "'name'" in text:
-        # Match starting from first '{' to last matching '}'
+    if not calls and ('"name"' in text or "'name'" in text):
         match = re.search(r"(\{\s*[\"']name[\"']\s*:\s*[\"'][a-zA-Z0-9_]+[\"'][\s\S]*\})", text)
         if match:
             obj = parse_flexible_json(match.group(1))
@@ -95,7 +102,7 @@ def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
 
 
 class ControlAIAgent:
-    """Offline Control Engineering Agent using Qwen3-4B on MLX with deterministic tool calling and streaming."""
+    """Universal Control Engineering Agent supporting MLX (Apple Silicon) and PyTorch/Transformers (Linux/CUDA)."""
 
     def __init__(
         self,
@@ -109,18 +116,60 @@ class ControlAIAgent:
         self.registry = tool_registry
         self.max_tool_steps = max_tool_steps
 
-        # Load MLX model and HF tokenizer
-        if adapter_path:
-            self.model, self.mlx_tokenizer = load(model_path, adapter_path=adapter_path)
+        # Detect platform & backend
+        self.is_mlx = HAS_MLX and not model_path.startswith("Qwen/") and not os.environ.get("FORCE_TRANSFORMERS")
+
+        if self.is_mlx:
+            if adapter_path:
+                self.model, self.mlx_tokenizer = mlx_load(model_path, adapter_path=adapter_path)
+            else:
+                self.model, self.mlx_tokenizer = mlx_load(model_path)
+            self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
         else:
-            self.model, self.mlx_tokenizer = load(model_path)
-        self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
+            # Universal PyTorch / Transformers fallback on Linux, Colab, HuggingFace, CUDA
+            hf_id = "Qwen/Qwen2.5-3B-Instruct" if "mlx" in model_path else model_path
+            self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                hf_id,
+                torch_dtype="auto",
+                device_map="auto",
+                trust_remote_code=True,
+            )
+            if adapter_path and Path(adapter_path).exists():
+                try:
+                    from peft import PeftModel
+                    self.model = PeftModel.from_pretrained(self.model, adapter_path)
+                except Exception:
+                    pass
 
         # Initialize local offline RAG index
         try:
             self.rag_index = ControlRAGIndex()
         except Exception:
             self.rag_index = None
+
+    def _generate(self, prompt: str, max_tokens: int = 2000) -> str:
+        """Universal text generation handling both MLX and PyTorch backends."""
+        if self.is_mlx:
+            return mlx_generate(
+                self.model,
+                self.mlx_tokenizer,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                verbose=False,
+            ).strip()
+        else:
+            import torch
+            inputs = self.hf_tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_tokens,
+                    do_sample=False,
+                    pad_token_id=self.hf_tokenizer.eos_token_id,
+                )
+            new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
+            return self.hf_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def _get_grounded_instruction(self, user_prompt: str, base_instruction: str) -> str:
         """Retrieve relevant textbook theorems and inject grounding into system instructions."""
@@ -181,13 +230,7 @@ class ControlAIAgent:
                 add_generation_prompt=True,
             )
 
-            model_output = generate(
-                self.model,
-                self.mlx_tokenizer,
-                prompt=rendered_prompt,
-                max_tokens=max_tokens_per_step,
-                verbose=False,
-            ).strip()
+            model_output = self._generate(rendered_prompt, max_tokens=max_tokens_per_step)
 
             tool_calls, pre_text = _extract_tool_calls(model_output)
 
@@ -240,13 +283,7 @@ class ControlAIAgent:
             tokenize=False,
             add_generation_prompt=True,
         )
-        final_output = generate(
-            self.model,
-            self.mlx_tokenizer,
-            prompt=forced_prompt,
-            max_tokens=max_tokens_per_step,
-            verbose=False,
-        ).strip()
+        final_output = self._generate(forced_prompt, max_tokens=max_tokens_per_step)
 
         _, clean_final = _extract_tool_calls(final_output)
         return AgentResult(
@@ -299,13 +336,7 @@ class ControlAIAgent:
                 add_generation_prompt=True,
             )
 
-            model_output = generate(
-                self.model,
-                self.mlx_tokenizer,
-                prompt=rendered_prompt,
-                max_tokens=max_tokens_per_step,
-                verbose=False,
-            ).strip()
+            model_output = self._generate(rendered_prompt, max_tokens=max_tokens_per_step)
 
             tool_calls, pre_text = _extract_tool_calls(model_output)
 
@@ -396,13 +427,7 @@ class ControlAIAgent:
             add_generation_prompt=True,
         )
 
-        final_output = generate(
-            self.model,
-            self.mlx_tokenizer,
-            prompt=forced_prompt,
-            max_tokens=max_tokens_per_step,
-            verbose=False,
-        ).strip()
+        final_output = self._generate(forced_prompt, max_tokens=max_tokens_per_step)
 
         # If model generated another tool call during final synthesis, execute it!
         synth_tool_calls, clean_synth = _extract_tool_calls(final_output)
@@ -421,7 +446,7 @@ class ControlAIAgent:
 
             # Re-generate synthesis after executing the tool
             re_prompt = self.hf_tokenizer.apply_chat_template(messages, tools=None, tokenize=False, add_generation_prompt=True)
-            final_output = generate(self.model, self.mlx_tokenizer, prompt=re_prompt, max_tokens=max_tokens_per_step, verbose=False).strip()
+            final_output = self._generate(re_prompt, max_tokens=max_tokens_per_step)
             _, clean_synth = _extract_tool_calls(final_output)
 
         final_text = clean_synth or final_output
