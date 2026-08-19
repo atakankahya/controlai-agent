@@ -29,13 +29,12 @@ from controlai_rag.index import ControlRAGIndex
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Pre-loading ControlAI Core Engine on startup...")
-    agent = get_agent()
-    print("Warming up KV cache for the system prompt + tool schemas...")
-    try:
-        agent.run("hi", verbose=False)
-    except Exception as exc:
-        print(f"Warning: warm-up generation failed (non-fatal): {exc}")
+    get_agent()
     print("ControlAI Core Engine is online and ready for traffic.")
+    # Note: the system prompt + tool schemas (~6.4k tokens) are only cached
+    # in llama.cpp after the first generation. Send one chat message after
+    # a fresh deploy or after the Space wakes from sleep to warm it up —
+    # every request after that reuses the cached prefix and is fast.
     yield
 
 
