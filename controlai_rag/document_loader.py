@@ -6,9 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pypdf import PdfReader
-
-
 class Document:
     def __init__(self, content: str, source_path: str, metadata: dict[str, Any] | None = None) -> None:
         self.content = content
@@ -26,6 +23,7 @@ class Document:
 def load_pdf(path: Path) -> list[Document]:
     docs = []
     try:
+        from pypdf import PdfReader
         reader = PdfReader(str(path))
         for idx, page in enumerate(reader.pages, 1):
             text = page.extract_text() or ""
