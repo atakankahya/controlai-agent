@@ -268,9 +268,26 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
 # A minimal Gradio Blocks app is mounted (at a sub-path, not "/") purely so
 # this Space is recognized as a Gradio SDK app -- required for ZeroGPU
 # hardware. The real UI is still served by our own FastAPI routes above.
+#
+# ZeroGPU's startup check only registers @spaces.GPU functions that are
+# wired to an actual Gradio event handler -- a bare decorated function that's
+# only ever called from a FastAPI route isn't enough and fails startup with
+# "No @spaces.GPU function detected". A hidden button bound to the same
+# function used by the real endpoints satisfies that check.
 _gpu_demo = gr.Blocks()
 with _gpu_demo:
     gr.Markdown("ControlAI is running. Visit the Space's root URL for the full app.")
+    _probe_in = gr.Textbox(visible=False)
+    _probe_out = gr.Textbox(visible=False)
+    _probe_btn = gr.Button(visible=False)
+
+    @spaces.GPU(duration=120)
+    def _zerogpu_registration_probe(message: str) -> str:
+        result = get_agent().run(message or "hi", history=[], verbose=False)
+        return result.final_response
+
+    _probe_btn.click(fn=_zerogpu_registration_probe, inputs=_probe_in, outputs=_probe_out)
+
 app = gr.mount_gradio_app(app, _gpu_demo, path="/gradio")
 
 
