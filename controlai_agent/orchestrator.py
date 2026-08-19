@@ -59,8 +59,20 @@ def sanitize_json_escapes(raw: str) -> str:
     return re.sub(r"\\(?![/\"\\bfnrtu])", r"\\\\", raw)
 
 
+def fix_space_separated_arrays(json_str: str) -> str:
+    """Convert MATLAB/Numpy space-separated lists inside brackets [1 2 3] to [1, 2, 3]."""
+    def _fix_brackets(match: re.Match) -> str:
+        content = match.group(1).strip()
+        # Replace spaces between numbers with commas
+        fixed = re.sub(r"([0-9eE\.\-+]+)\s+([0-9eE\.\-+]+)", r"\1, \2", content)
+        fixed = re.sub(r"([0-9eE\.\-+]+)\s+([0-9eE\.\-+]+)", r"\1, \2", fixed)
+        fixed = re.sub(r"([0-9eE\.\-+]+)\s+([0-9eE\.\-+]+)", r"\1, \2", fixed)
+        return f"[{fixed}]"
+    return re.sub(r"\[\s*([0-9eE\.\-+\s]+?)\s*\]", _fix_brackets, json_str)
+
+
 def parse_flexible_json(raw_str: str) -> dict[str, Any] | None:
-    """Parse JSON with fallback to escape sanitization and non-strict control characters."""
+    """Parse JSON with fallback to escape sanitization, array fixing, and non-strict control characters."""
     raw_str = raw_str.strip()
     try:
         obj = json.loads(raw_str, strict=False)
@@ -72,6 +84,14 @@ def parse_flexible_json(raw_str: str) -> dict[str, Any] | None:
     try:
         sanitized = sanitize_json_escapes(raw_str)
         obj = json.loads(sanitized, strict=False)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    try:
+        fixed_arrays = fix_space_separated_arrays(sanitize_json_escapes(raw_str))
+        obj = json.loads(fixed_arrays, strict=False)
         if isinstance(obj, dict):
             return obj
     except Exception:
