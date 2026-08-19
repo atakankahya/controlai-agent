@@ -34,10 +34,6 @@ async def lifespan(app: FastAPI):
     print("Pre-loading ControlAI Core Engine on startup...")
     get_agent()
     print("ControlAI Core Engine is online and ready for traffic.")
-    # Note: the system prompt + tool schemas (~6.4k tokens) are only cached
-    # in llama.cpp after the first generation. Send one chat message after
-    # a fresh deploy or after the Space wakes from sleep to warm it up —
-    # every request after that reuses the cached prefix and is fast.
     yield
 
 
@@ -86,12 +82,12 @@ def get_agent() -> ControlAIAgent:
 # decorated with @spaces.GPU (it requests physical GPU time for the call and
 # releases it afterward). Outside of a ZeroGPU Space this decorator is a
 # harmless no-op, so it's safe to always wrap these.
-@spaces.GPU(duration=120)
+@spaces.GPU(duration=300)
 def _run_stream_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str]]):
     yield from agent.run_stream(message, history=history)
 
 
-@spaces.GPU(duration=120)
+@spaces.GPU(duration=300)
 def _run_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str]]):
     return agent.run(message, history=history, verbose=False)
 
@@ -99,7 +95,7 @@ def _run_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str
 # ZeroGPU's startup check statically looks for a @spaces.GPU function wired
 # to a Gradio event handler -- must be a module-level function referenced by
 # name, not one defined inline inside a `with gr.Blocks():` block.
-@spaces.GPU(duration=120)
+@spaces.GPU(duration=300)
 def _zerogpu_registration_probe(message: str) -> str:
     result = get_agent().run(message or "hi", history=[], verbose=False)
     return result.final_response
