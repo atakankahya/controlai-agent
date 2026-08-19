@@ -220,18 +220,26 @@ class ControlAIAgent:
                 hf_id = CONTROLAI_HF_REPO if "mlx" in str(model_path) or str(model_path).startswith("Qwen/") else model_path
                 print(f"Loading PyTorch model: {hf_id} (threads: {num_threads})...")
                 self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
-                dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                has_cuda = torch.cuda.is_available()
+                dtype = torch.bfloat16 if has_cuda else torch.float32
                 # SDPA is a large, free speedup over the "eager" attention
                 # default -- meaningful for the long tool-schema prompt prefix.
-                attn_impl = "sdpa" if torch.cuda.is_available() else None
+                attn_impl = "sdpa" if has_cuda else None
                 self.model = AutoModelForCausalLM.from_pretrained(
                     hf_id,
                     torch_dtype=dtype,
                     low_cpu_mem_usage=True,
-                    device_map="auto",
                     trust_remote_code=True,
                     attn_implementation=attn_impl,
                 )
+                if has_cuda:
+                    # device_map="auto" infers available VRAM at load time; on
+                    # ZeroGPU no physical GPU is attached to the process yet at
+                    # this point (that only happens inside a @spaces.GPU call),
+                    # so it can silently offload layers to CPU. An explicit
+                    # move avoids that and any ambiguity about what actually
+                    # ran where.
+                    self.model = self.model.to("cuda")
                 # The fused ControlAI model already has the LoRA weights merged in;
                 # only apply a separate adapter when loading a plain base model.
                 if hf_id != CONTROLAI_HF_REPO and adapter_path and Path(adapter_path).exists():
@@ -241,7 +249,7 @@ class ControlAIAgent:
                         print(f"Loaded PEFT LoRA adapter from: {adapter_path}")
                     except Exception as exc:
                         print(f"Warning: Could not load LoRA adapter in PyTorch: {exc}")
-                print("PyTorch model loaded successfully.")
+                print(f"PyTorch model loaded successfully. Model device: {next(self.model.parameters()).device}")
 
         # Initialize local offline RAG index
         try:
