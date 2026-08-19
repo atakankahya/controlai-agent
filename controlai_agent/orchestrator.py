@@ -113,6 +113,9 @@ def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
     return calls, cleaned
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
 class ControlAIAgent:
     """Universal Control Engineering Agent supporting GGUF, Ollama C++, Apple MLX, and PyTorch."""
 
@@ -124,6 +127,12 @@ class ControlAIAgent:
         max_tool_steps: int = 3,
     ) -> None:
         self.model_path = model_path
+        
+        # Auto-detect trained LoRA adapter if none explicitly provided
+        default_adapter = PROJECT_ROOT / "adapters" / "controlai_qwen3_4b_sft_v2"
+        if adapter_path is None and default_adapter.exists():
+            adapter_path = str(default_adapter)
+
         self.adapter_path = adapter_path
         self.registry = tool_registry
         self.max_tool_steps = max_tool_steps
