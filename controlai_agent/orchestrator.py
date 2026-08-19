@@ -221,12 +221,16 @@ class ControlAIAgent:
                 print(f"Loading PyTorch model: {hf_id} (threads: {num_threads})...")
                 self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
                 dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                # SDPA is a large, free speedup over the "eager" attention
+                # default -- meaningful for the long tool-schema prompt prefix.
+                attn_impl = "sdpa" if torch.cuda.is_available() else None
                 self.model = AutoModelForCausalLM.from_pretrained(
                     hf_id,
                     torch_dtype=dtype,
                     low_cpu_mem_usage=True,
                     device_map="auto",
                     trust_remote_code=True,
+                    attn_implementation=attn_impl,
                 )
                 # The fused ControlAI model already has the LoRA weights merged in;
                 # only apply a separate adapter when loading a plain base model.
