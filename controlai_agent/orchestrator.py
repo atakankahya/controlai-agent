@@ -182,35 +182,54 @@ class ControlAIAgent:
                 self.model, self.mlx_tokenizer = mlx_load(model_path)
             self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
         else:
-            # Universal PyTorch / Transformers fallback on Linux, Colab, HuggingFace, CUDA
-            import torch
-            num_threads = min(os.cpu_count() or 2, 4)
-            try:
-                torch.set_num_threads(num_threads)
-            except Exception:
-                pass
-
-            hf_id = "Qwen/Qwen2.5-3B-Instruct" if "mlx" in str(model_path) else model_path
-            print(f"Loading PyTorch model: {hf_id} (CPU threads: {num_threads})...")
-            self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
-            
-            # Use bfloat16 on CUDA, float32 on CPU for clean numerical stability
-            dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-            self.model = AutoModelForCausalLM.from_pretrained(
-                hf_id,
-                torch_dtype=dtype,
-                low_cpu_mem_usage=True,
-                device_map="auto",
-                trust_remote_code=True,
-            )
-            if adapter_path and Path(adapter_path).exists():
+            # Universal Linux / Cloud / HuggingFace Spaces backend: Fast 4-bit C++ GGUF
+            self.llama_model = None
+            if HAS_LLAMA_CPP:
                 try:
-                    from peft import PeftModel
-                    self.model = PeftModel.from_pretrained(self.model, adapter_path)
-                    print(f"Loaded PEFT LoRA adapter from: {adapter_path}")
+                    threads = min(os.cpu_count() or 2, 4)
+                    print(f"Loading high-speed GGUF Q4_K_M engine via llama_cpp (threads: {threads})...")
+                    self.llama_model = llama_cpp.Llama.from_pretrained(
+                        repo_id="Qwen/Qwen2.5-3B-Instruct-GGUF",
+                        filename="*q4_k_m.gguf",
+                        n_ctx=2048,
+                        n_threads=threads,
+                        verbose=False,
+                    )
+                    self.is_gguf = True
+                    self.hf_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
+                    print("GGUF Q4_K_M model loaded successfully via llama_cpp.")
                 except Exception as exc:
-                    print(f"Warning: Could not load LoRA adapter in PyTorch: {exc}")
-            print("PyTorch model loaded successfully.")
+                    print(f"Notice: llama_cpp GGUF auto-load failed, falling back to PyTorch: {exc}")
+                    self.is_gguf = False
+
+            if not self.is_gguf:
+                # PyTorch fallback on CUDA or if GGUF is disabled
+                import torch
+                num_threads = min(os.cpu_count() or 2, 4)
+                try:
+                    torch.set_num_threads(num_threads)
+                except Exception:
+                    pass
+
+                hf_id = "Qwen/Qwen2.5-3B-Instruct" if "mlx" in str(model_path) else model_path
+                print(f"Loading PyTorch model: {hf_id} (threads: {num_threads})...")
+                self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
+                dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    hf_id,
+                    torch_dtype=dtype,
+                    low_cpu_mem_usage=True,
+                    device_map="auto",
+                    trust_remote_code=True,
+                )
+                if adapter_path and Path(adapter_path).exists():
+                    try:
+                        from peft import PeftModel
+                        self.model = PeftModel.from_pretrained(self.model, adapter_path)
+                        print(f"Loaded PEFT LoRA adapter from: {adapter_path}")
+                    except Exception as exc:
+                        print(f"Warning: Could not load LoRA adapter in PyTorch: {exc}")
+                print("PyTorch model loaded successfully.")
 
         # Initialize local offline RAG index
         try:

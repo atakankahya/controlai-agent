@@ -1,3 +1,5 @@
+llama-cpp-python>=0.2.80
+huggingface-hub>=0.23.0
 torch>=2.0.0
 transformers>=4.40.0
 accelerate>=0.28.0
