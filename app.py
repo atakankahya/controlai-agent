@@ -29,7 +29,12 @@ from controlai_rag.index import ControlRAGIndex
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Pre-loading ControlAI Core Engine on startup...")
-    get_agent()
+    agent = get_agent()
+    print("Warming up KV cache for the system prompt + tool schemas...")
+    try:
+        agent.run("hi", verbose=False)
+    except Exception as exc:
+        print(f"Warning: warm-up generation failed (non-fatal): {exc}")
     print("ControlAI Core Engine is online and ready for traffic.")
     yield
 
