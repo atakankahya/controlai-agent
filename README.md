@@ -1,18 +1,37 @@
 # ControlAI: Open-Source Safety-Critical AI Agent for Control Systems Engineering
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/atakankahya/controlai-agent/blob/main/ControlAI_Colab_Demo.ipynb)
 [![GitHub stars](https://img.shields.io/github/stars/atakankahya/controlai-agent?style=social)](https://github.com/atakankahya/controlai-agent)
 [![Hugging Face Model](https://img.shields.io/badge/Hugging%20Face-ControlAI--Agent-blue)](https://huggingface.co/atakankahya/ControlAI-Agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-**ControlAI** is an open-source, domain-specific AI agent engineered specifically for **Control Systems Engineering, Dynamical Systems, Robotics, and Applied Mathematics**.
+**ControlAI** is an open-source, domain-specific AI assistant engineered specifically for **Control Systems Engineering, Dynamical Systems, Robotics, and Applied Mathematics**.
+
+---
+
+## Quickstart: Run Locally in 2 Steps
+
+ControlAI runs locally on your workstation without cloud dependencies:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/atakankahya/controlai-agent.git
+cd controlai-agent
+
+# 2. Launch the application (Automatically opens browser at http://127.0.0.1:8000)
+./run.sh
+```
+
+To run in interactive terminal CLI mode instead:
+```bash
+./run.sh --cli
+```
 
 ---
 
 ## Motivation: Safety-Critical Verification in Control Engineering
 
-Standard large language models (LLMs) operate probabilistically without deterministic verification. When applied to physical systems—such as autonomous aerial vehicles, industrial manipulators, or power systems—general-purpose models present severe reliability challenges:
+Standard large language models (LLMs) operate probabilistically without deterministic verification. When applied to physical systems—such as autonomous aerial vehicles, industrial manipulators, or power grids—general-purpose models present severe reliability challenges:
 * **Numerical Hallucinations:** Estimating eigenvalues without characteristic polynomial evaluation, inverting singular matrices, or generating unstable feedback gains.
 * **Lack of Formal Proof Structure:** Omitting boundary conditions, PBH rank tests, or domain-specific stability limits.
 * **Physical Safety Violations:** A sign error in a state feedback gain leads directly to closed-loop instability in hardware.
@@ -20,19 +39,8 @@ Standard large language models (LLMs) operate probabilistically without determin
 **ControlAI addresses these limitations through a hybrid architecture:**
 1. **Deterministic Scientific Sandbox:** Computes continuous/discrete algebraic Riccati equations (CARE/DARE), matrix exponentials, and Bode diagrams using LAPACK, SciPy, and CVXPY.
 2. **4-Stage Mathematical Proof Standard:** Formulates system class, analytical theorems, closed-form derivations, and engineering breakdown limits.
-3. **Dynamic Simulation & Plotting:** Solves nonlinear differential equations and renders verified trajectories.
+3. **Dynamic Simulation & Plotting:** Solves nonlinear differential equations and renders verified trajectories directly in the interface.
 4. **Offline RAG Knowledge Engine:** Grounded with 68,000+ chunks indexed across classical and modern control engineering literature.
-
----
-
-## Live Demo and Access
-
-* **Interactive Google Colab Demo:**  
-  Run ControlAI in a cloud environment with zero local setup:  
-  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/atakankahya/controlai-agent/blob/main/ControlAI_Colab_Demo.ipynb)
-
-* **Hugging Face Model Repository:**  
-  Access model weights and fine-tuning configurations: [atakankahya/ControlAI-Agent](https://huggingface.co/atakankahya/ControlAI-Agent)
 
 ---
 
@@ -68,9 +76,9 @@ graph TD
 
 ## Key Capabilities
 
-### 1. Web Console (`web/`)
-* **Real-Time Token Streaming (SSE):** Word-level fluid rendering with smart scroll retention.
-* **LaTeX Formula Rendering:** KaTeX integration with math delimiter protection and code block syntax highlighting.
+### 1. Modern Interactive Web Console (`web/`)
+* **Real-Time Token Streaming (SSE):** Token-by-token fluid rendering with smart scroll retention.
+* **LaTeX Formula Rendering:** KaTeX integration with math delimiter protection and syntax-highlighted code blocks.
 * **Engineering Toolbar:** One-click insertion of state matrices, transfer functions, and control parameters ($\zeta, \omega_n$).
 
 ### 2. Deterministic Mathematical Tool Suite (`controlai_agent/tools/`)
@@ -83,7 +91,7 @@ graph TD
 
 ### 3. Live Python Execution Sandbox (`python_executor.py`)
 * Executes scientific Python routines using `numpy`, `scipy.signal`, `scipy.linalg`, `control`, and `matplotlib`.
-* Automatically isolates and captures generated simulation plots to `outputs/plots/`.
+* Automatically isolates and captures generated simulation plots to `outputs/plots/` and renders them in chat.
 
 ---
 
@@ -99,44 +107,6 @@ Evaluated across **50 multi-pillar benchmark problems**:
 | **Safety & Traps** *(Uncontrollable / Ill-conditioned modes)* | 60.0% | **80.0%** | Pre-computation PBH rank verification. |
 | **Real-World Case Studies** *(Aerospace, Drone, Automotive)* | 80.0% | **80.0%** | CBF-QP safety filtering and nonlinear inversion. |
 | **Overall Score** | 47.3% | **87.3%** | Deterministic tool execution and mathematical grounding. |
-
----
-
-## Local Installation and Usage
-
-### 1. Clone and Set Up Environment
-
-```bash
-# Clone the repository
-git clone https://github.com/atakankahya/controlai-agent.git
-cd controlai-agent
-
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements-corpus.txt
-pip install -r requirements-training.txt
-pip install rich
-```
-
-### 2. Launch Universal Assistant (Web & Browser Auto-Open)
-
-```bash
-./run.sh
-```
-* Starts the backend server and opens the browser interface at `http://127.0.0.1:8000`.
-
-### 3. Interactive Terminal CLI
-
-```bash
-# Launch interactive terminal session
-./run.sh --cli
-
-# Or execute a single query directly
-python cli.py "Design an LQR controller for A=[[0, 1], [-2, -3]], B=[[0], [1]], Q=diag([10, 1]), R=1"
-```
 
 ---
 
