@@ -171,7 +171,7 @@ class ControlAIAgent:
             self.llama_model = llama_cpp.Llama(
                 model_path=str(model_path),
                 n_gpu_layers=-1,  # Offload all layers to Metal / CUDA GPU
-                n_ctx=4096,
+                n_ctx=16384,
                 verbose=False,
             )
             self.hf_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
@@ -196,7 +196,7 @@ class ControlAIAgent:
                     self.llama_model = llama_cpp.Llama.from_pretrained(
                         repo_id=gguf_repo,
                         filename=gguf_filename,
-                        n_ctx=4096,
+                        n_ctx=16384,
                         n_threads=threads,
                         verbose=False,
                     )
