@@ -1,5 +1,15 @@
+---
+title: ControlAI Agent
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # ControlAI: Open-Source Safety-Critical AI Agent for Control Systems Engineering
 
+[![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces/atakankahya/ControlAI-Agent)
 [![GitHub stars](https://img.shields.io/github/stars/atakankahya/controlai-agent?style=social)](https://github.com/atakankahya/controlai-agent)
 [![Hugging Face Model](https://img.shields.io/badge/Hugging%20Face-ControlAI--Agent-blue)](https://huggingface.co/atakankahya/ControlAI-Agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
