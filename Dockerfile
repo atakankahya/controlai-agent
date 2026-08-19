@@ -23,8 +23,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -u 1000 user
 WORKDIR /home/user/app
 
-# Install Python dependencies
+# Install Python dependencies. llama-cpp-python compiles from source (no
+# prebuilt wheel is published for recent versions); cap build parallelism so
+# the compiler doesn't spawn enough jobs to OOM-kill the Spaces build machine.
 COPY requirements.txt .
+ENV CMAKE_BUILD_PARALLEL_LEVEL=1 \
+    CMAKE_ARGS="-DGGML_NATIVE=OFF"
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 

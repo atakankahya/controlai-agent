@@ -183,27 +183,33 @@ class ControlAIAgent:
             self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
         else:
             # Universal Linux / Cloud / HuggingFace Spaces backend: Fast 4-bit C++ GGUF
+            # of OUR OWN fine-tuned ControlAI model (never a generic base model).
+            CONTROLAI_HF_REPO = "atakankahya/ControlAI-Agent"
+            gguf_repo = os.environ.get("CONTROLAI_GGUF_REPO", CONTROLAI_HF_REPO)
+            gguf_filename = os.environ.get("CONTROLAI_GGUF_FILENAME", "*controlai-q4_k_m.gguf")
+
             self.llama_model = None
             if HAS_LLAMA_CPP:
                 try:
                     threads = min(os.cpu_count() or 2, 4)
-                    print(f"Loading high-speed GGUF Q4_K_M engine via llama_cpp (threads: {threads})...")
+                    print(f"Loading high-speed GGUF Q4_K_M ControlAI model from {gguf_repo} (threads: {threads})...")
                     self.llama_model = llama_cpp.Llama.from_pretrained(
-                        repo_id="Qwen/Qwen2.5-3B-Instruct-GGUF",
-                        filename="*q4_k_m.gguf",
-                        n_ctx=2048,
+                        repo_id=gguf_repo,
+                        filename=gguf_filename,
+                        n_ctx=4096,
                         n_threads=threads,
                         verbose=False,
                     )
                     self.is_gguf = True
-                    self.hf_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
-                    print("GGUF Q4_K_M model loaded successfully via llama_cpp.")
+                    self.hf_tokenizer = AutoTokenizer.from_pretrained(CONTROLAI_HF_REPO, trust_remote_code=True)
+                    print("GGUF Q4_K_M ControlAI model loaded successfully via llama_cpp.")
                 except Exception as exc:
                     print(f"Notice: llama_cpp GGUF auto-load failed, falling back to PyTorch: {exc}")
                     self.is_gguf = False
 
             if not self.is_gguf:
-                # PyTorch fallback on CUDA or if GGUF is disabled
+                # PyTorch fallback on CUDA or if the GGUF engine is unavailable.
+                # Always our own fine-tuned model, never a generic base model.
                 import torch
                 num_threads = min(os.cpu_count() or 2, 4)
                 try:
@@ -211,7 +217,7 @@ class ControlAIAgent:
                 except Exception:
                     pass
 
-                hf_id = "Qwen/Qwen2.5-3B-Instruct" if "mlx" in str(model_path) else model_path
+                hf_id = CONTROLAI_HF_REPO if "mlx" in str(model_path) or str(model_path).startswith("Qwen/") else model_path
                 print(f"Loading PyTorch model: {hf_id} (threads: {num_threads})...")
                 self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
                 dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
@@ -222,7 +228,9 @@ class ControlAIAgent:
                     device_map="auto",
                     trust_remote_code=True,
                 )
-                if adapter_path and Path(adapter_path).exists():
+                # The fused ControlAI model already has the LoRA weights merged in;
+                # only apply a separate adapter when loading a plain base model.
+                if hf_id != CONTROLAI_HF_REPO and adapter_path and Path(adapter_path).exists():
                     try:
                         from peft import PeftModel
                         self.model = PeftModel.from_pretrained(self.model, adapter_path)
