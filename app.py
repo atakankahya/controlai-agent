@@ -12,6 +12,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import gradio as gr
+import spaces
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -78,6 +80,20 @@ def get_agent() -> ControlAIAgent:
         agent_instance = ControlAIAgent()
         print("ControlAI Core Engine initialized.")
     return agent_instance
+
+
+# On ZeroGPU Spaces, actual CUDA work may only happen inside a function
+# decorated with @spaces.GPU (it requests physical GPU time for the call and
+# releases it afterward). Outside of a ZeroGPU Space this decorator is a
+# harmless no-op, so it's safe to always wrap these.
+@spaces.GPU(duration=120)
+def _run_stream_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str]]):
+    yield from agent.run_stream(message, history=history)
+
+
+@spaces.GPU(duration=120)
+def _run_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str]]):
+    return agent.run(message, history=history, verbose=False)
 
 
 class ChatRequest(BaseModel):
@@ -186,7 +202,7 @@ async def chat_stream_endpoint(req: ChatRequest):
     def event_generator():
         try:
             with inference_lock:
-                for event in agent.run_stream(req.message.strip(), history=req.history):
+                for event in _run_stream_on_gpu(agent, req.message.strip(), req.history):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'error': str(exc)}, ensure_ascii=False)}\n\n"
@@ -211,7 +227,7 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
     try:
         agent = get_agent()
         with inference_lock:
-            result = agent.run(req.message.strip(), history=req.history, verbose=False)
+            result = _run_on_gpu(agent, req.message.strip(), req.history)
         elapsed = time.time() - t0
 
         # Collect tool traces
@@ -249,10 +265,26 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
         )
 
 
+# A minimal Gradio Blocks app is mounted (at a sub-path, not "/") purely so
+# this Space is recognized as a Gradio SDK app -- required for ZeroGPU
+# hardware. The real UI is still served by our own FastAPI routes above.
+_gpu_demo = gr.Blocks()
+with _gpu_demo:
+    gr.Markdown("ControlAI is running. Visit the Space's root URL for the full app.")
+app = gr.mount_gradio_app(app, _gpu_demo, path="/gradio")
+
+
 def main() -> None:
+    import uvicorn
+
+    if os.environ.get("SPACE_ID"):
+        port = int(os.environ.get("PORT", 7860))
+        print(f"ControlAI Web UI running on Hugging Face Spaces (port {port})...")
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        return
+
     import threading
     import webbrowser
-    import uvicorn
 
     def _open_browser() -> None:
         time.sleep(1.2)
