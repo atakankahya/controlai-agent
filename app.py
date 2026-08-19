@@ -96,6 +96,15 @@ def _run_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str
     return agent.run(message, history=history, verbose=False)
 
 
+# ZeroGPU's startup check statically looks for a @spaces.GPU function wired
+# to a Gradio event handler -- must be a module-level function referenced by
+# name, not one defined inline inside a `with gr.Blocks():` block.
+@spaces.GPU(duration=120)
+def _zerogpu_registration_probe(message: str) -> str:
+    result = get_agent().run(message or "hi", history=[], verbose=False)
+    return result.final_response
+
+
 class ChatRequest(BaseModel):
     message: str
     history: list[dict[str, str]] = []
@@ -280,12 +289,6 @@ with _gpu_demo:
     _probe_in = gr.Textbox(visible=False)
     _probe_out = gr.Textbox(visible=False)
     _probe_btn = gr.Button(visible=False)
-
-    @spaces.GPU(duration=120)
-    def _zerogpu_registration_probe(message: str) -> str:
-        result = get_agent().run(message or "hi", history=[], verbose=False)
-        return result.final_response
-
     _probe_btn.click(fn=_zerogpu_registration_probe, inputs=_probe_in, outputs=_probe_out)
 
 app = gr.mount_gradio_app(app, _gpu_demo, path="/gradio")
