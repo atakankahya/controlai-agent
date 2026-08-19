@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,15 @@ from controlai_rag.chunker import chunk_document
 from controlai_rag.document_loader import load_single_file
 from controlai_rag.index import ControlRAGIndex
 
-app = FastAPI(title="ControlAI", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Pre-loading ControlAI Core Engine on startup...")
+    get_agent()
+    print("ControlAI Core Engine is online and ready for traffic.")
+    yield
+
+
+app = FastAPI(title="ControlAI", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

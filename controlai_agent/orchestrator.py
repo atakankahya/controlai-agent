@@ -183,11 +183,23 @@ class ControlAIAgent:
             self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
         else:
             # Universal PyTorch / Transformers fallback on Linux, Colab, HuggingFace, CUDA
+            import torch
+            num_threads = min(os.cpu_count() or 2, 4)
+            try:
+                torch.set_num_threads(num_threads)
+            except Exception:
+                pass
+
             hf_id = "Qwen/Qwen2.5-3B-Instruct" if "mlx" in str(model_path) else model_path
+            print(f"Loading PyTorch model: {hf_id} (CPU threads: {num_threads})...")
             self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
+            
+            # Use bfloat16 on CUDA, float32 on CPU for clean numerical stability
+            dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
             self.model = AutoModelForCausalLM.from_pretrained(
                 hf_id,
-                torch_dtype="auto",
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
                 device_map="auto",
                 trust_remote_code=True,
             )
@@ -195,8 +207,10 @@ class ControlAIAgent:
                 try:
                     from peft import PeftModel
                     self.model = PeftModel.from_pretrained(self.model, adapter_path)
-                except Exception:
-                    pass
+                    print(f"Loaded PEFT LoRA adapter from: {adapter_path}")
+                except Exception as exc:
+                    print(f"Warning: Could not load LoRA adapter in PyTorch: {exc}")
+            print("PyTorch model loaded successfully.")
 
         # Initialize local offline RAG index
         try:
