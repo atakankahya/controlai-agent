@@ -17,6 +17,18 @@ try:
 except ImportError:
     HAS_MLX = False
 
+try:
+    import llama_cpp
+    HAS_LLAMA_CPP = True
+except ImportError:
+    HAS_LLAMA_CPP = False
+
+try:
+    import ollama
+    HAS_OLLAMA = True
+except ImportError:
+    HAS_OLLAMA = False
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from controlai_agent.prompts import CONTROLAI_SYSTEM_PROMPT
@@ -102,7 +114,7 @@ def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
 
 
 class ControlAIAgent:
-    """Universal Control Engineering Agent supporting MLX (Apple Silicon) and PyTorch/Transformers (Linux/CUDA)."""
+    """Universal Control Engineering Agent supporting GGUF, Ollama C++, Apple MLX, and PyTorch."""
 
     def __init__(
         self,
@@ -117,9 +129,24 @@ class ControlAIAgent:
         self.max_tool_steps = max_tool_steps
 
         # Detect platform & backend
-        self.is_mlx = HAS_MLX and not model_path.startswith("Qwen/") and not os.environ.get("FORCE_TRANSFORMERS")
+        self.is_ollama = str(model_path).startswith("ollama")
+        self.is_gguf = str(model_path).endswith(".gguf") or "gguf" in str(model_path).lower()
+        self.is_mlx = HAS_MLX and not self.is_ollama and not self.is_gguf and not str(model_path).startswith("Qwen/") and not os.environ.get("FORCE_TRANSFORMERS")
 
-        if self.is_mlx:
+        if self.is_ollama:
+            self.ollama_model = model_path.split(":", 1)[1] if ":" in str(model_path) else "controlai"
+            self.hf_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
+        elif self.is_gguf:
+            if not HAS_LLAMA_CPP:
+                raise ImportError("llama-cpp-python is required to run GGUF models. Install it with: pip install llama-cpp-python")
+            self.llama_model = llama_cpp.Llama(
+                model_path=str(model_path),
+                n_gpu_layers=-1,  # Offload all layers to Metal / CUDA GPU
+                n_ctx=4096,
+                verbose=False,
+            )
+            self.hf_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
+        elif self.is_mlx:
             if adapter_path:
                 self.model, self.mlx_tokenizer = mlx_load(model_path, adapter_path=adapter_path)
             else:
@@ -127,7 +154,7 @@ class ControlAIAgent:
             self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
         else:
             # Universal PyTorch / Transformers fallback on Linux, Colab, HuggingFace, CUDA
-            hf_id = "Qwen/Qwen2.5-3B-Instruct" if "mlx" in model_path else model_path
+            hf_id = "Qwen/Qwen2.5-3B-Instruct" if "mlx" in str(model_path) else model_path
             self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
             self.model = AutoModelForCausalLM.from_pretrained(
                 hf_id,
@@ -149,8 +176,23 @@ class ControlAIAgent:
             self.rag_index = None
 
     def _generate(self, prompt: str, max_tokens: int = 2000) -> str:
-        """Universal text generation handling both MLX and PyTorch backends."""
-        if self.is_mlx:
+        """Universal text generation handling Ollama C++, GGUF llama_cpp, MLX, and PyTorch."""
+        if self.is_ollama:
+            res = ollama.generate(
+                model=self.ollama_model,
+                prompt=prompt,
+                options={"temperature": 0.2, "num_predict": max_tokens},
+            )
+            return res.get("response", "").strip()
+        elif self.is_gguf:
+            output = self.llama_model(
+                prompt,
+                max_tokens=max_tokens,
+                stop=["<|im_end|>", "<|endoftext|>"],
+                temperature=0.2,
+            )
+            return output["choices"][0]["text"].strip()
+        elif self.is_mlx:
             return mlx_generate(
                 self.model,
                 self.mlx_tokenizer,
