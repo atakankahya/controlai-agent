@@ -274,15 +274,15 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
         )
 
 
-# A minimal Gradio Blocks app is mounted (at a sub-path, not "/") purely so
-# this Space is recognized as a Gradio SDK app -- required for ZeroGPU
-# hardware. The real UI is still served by our own FastAPI routes above.
-#
-# ZeroGPU's startup check only registers @spaces.GPU functions that are
-# wired to an actual Gradio event handler -- a bare decorated function that's
-# only ever called from a FastAPI route isn't enough and fails startup with
-# "No @spaces.GPU function detected". A hidden button bound to the same
-# function used by the real endpoints satisfies that check.
+# A minimal Gradio Blocks app exists purely so this Space is recognized as a
+# Gradio SDK app -- required for ZeroGPU hardware -- and so the @spaces.GPU
+# registration probe below is wired to a real Gradio event handler ("No
+# @spaces.GPU function detected" otherwise). It is launched on its own
+# internal port rather than mounted into our FastAPI app: mounting it and
+# then binding our own uvicorn to the same public port collided with
+# Gradio's own server startup ("address already in use"). The real UI and
+# API are still served entirely by our own FastAPI routes above, on the
+# public port.
 _gpu_demo = gr.Blocks()
 with _gpu_demo:
     gr.Markdown("ControlAI is running. Visit the Space's root URL for the full app.")
@@ -291,14 +291,13 @@ with _gpu_demo:
     _probe_btn = gr.Button(visible=False)
     _probe_btn.click(fn=_zerogpu_registration_probe, inputs=_probe_in, outputs=_probe_out)
 
-app = gr.mount_gradio_app(app, _gpu_demo, path="/gradio")
-
 
 def main() -> None:
     import uvicorn
 
     if os.environ.get("SPACE_ID"):
         port = int(os.environ.get("PORT", 7860))
+        _gpu_demo.launch(server_name="0.0.0.0", server_port=port + 1, prevent_thread_lock=True, show_error=False, quiet=True)
         print(f"ControlAI Web UI running on Hugging Face Spaces (port {port})...")
         uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
         return
