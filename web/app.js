@@ -166,6 +166,13 @@ document.addEventListener('DOMContentLoaded', () => {
     text = text.replace(/\\includegraphics.*?\{([^\}]+)\}/g, '![$1](/plots/$1)');
     text = text.replace(/\\caption\{([\s\S]*?)\}/g, '*$1*');
 
+    // 0. Extract LaTeX Environments: \begin{aligned}...\end{aligned}, \begin{bmatrix}...\end{bmatrix}, etc.
+    text = text.replace(/\\begin\{(aligned|bmatrix|matrix|pmatrix|vmatrix|cases|equation\*?)\}[\s\S]*?\\end\{\1\}/g, (match) => {
+      const ph = `@@MATH_BLOCK_${mathPlaceholders.length}@@`;
+      mathPlaceholders.push({ type: 'block', formula: match.trim() });
+      return `\n\n${ph}\n\n`;
+    });
+
     // 1. Extract Display Math: $$ ... $$
     text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
       const ph = `@@MATH_BLOCK_${mathPlaceholders.length}@@`;
@@ -191,6 +198,13 @@ document.addEventListener('DOMContentLoaded', () => {
     text = text.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => {
       const ph = `@@MATH_INLINE_${mathPlaceholders.length}@@`;
       mathPlaceholders.push({ type: 'inline', formula: formula.trim() });
+      return ph;
+    });
+
+    // 5. Auto-catch unescaped freestanding math blocks like \frac{...}{...} or \omega \to ...
+    text = text.replace(/(\\frac\{[^\}]+\}\{[^\}]+\}|\\angle\s+[a-zA-Z0-9_\(\)]+|\\sqrt\{[^\}]+\}|\\dot\{[^\}]+\})/g, (match) => {
+      const ph = `@@MATH_INLINE_${mathPlaceholders.length}@@`;
+      mathPlaceholders.push({ type: 'inline', formula: match.trim() });
       return ph;
     });
 
