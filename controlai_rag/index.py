@@ -8,7 +8,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from rank_bm25 import BM25Okapi
+try:
+    from rank_bm25 import BM25Okapi
+except ImportError:
+    BM25Okapi = None
 
 from controlai_rag.chunker import Chunk
 
@@ -26,10 +29,12 @@ class ControlRAGIndex:
     def __init__(self, index_dir: Path = INDEX_DIR) -> None:
         self.index_dir = index_dir
         self.chunks: list[dict[str, Any]] = []
-        self.bm25: BM25Okapi | None = None
+        self.bm25: Any | None = None
         self._load_if_exists()
 
     def build_from_chunks(self, chunks: list[Chunk]) -> None:
+        if BM25Okapi is None:
+            return
         self.chunks = [c.to_dict() for c in chunks]
         corpus = [tokenize_corpus(c.text) for c in chunks]
         self.bm25 = BM25Okapi(corpus)
