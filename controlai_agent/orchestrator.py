@@ -283,16 +283,31 @@ class ControlAIAgent:
                 verbose=False,
             ).strip()
         else:
+            import time as _time
             import torch
             inputs = self.hf_tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            prompt_tokens = inputs["input_ids"].shape[1]
+            eos_ids = [
+                tid
+                for tid in (self.hf_tokenizer.eos_token_id, self.hf_tokenizer.convert_tokens_to_ids("<|im_end|>"))
+                if tid is not None and tid >= 0
+            ] or None
+            t0 = _time.time()
+            print(f"[_generate] starting: prompt_tokens={prompt_tokens} max_new_tokens={max_tokens} eos_ids={eos_ids}")
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=max_tokens,
                     do_sample=False,
-                    pad_token_id=self.hf_tokenizer.eos_token_id,
+                    temperature=None,
+                    top_p=None,
+                    top_k=None,
+                    eos_token_id=eos_ids,
+                    pad_token_id=self.hf_tokenizer.pad_token_id or self.hf_tokenizer.eos_token_id,
                 )
-            new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
+            new_tokens = outputs[0][prompt_tokens:]
+            elapsed = _time.time() - t0
+            print(f"[_generate] done: generated_tokens={len(new_tokens)} elapsed={elapsed:.1f}s ({len(new_tokens)/max(elapsed,0.001):.1f} tok/s)")
             return self.hf_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def _get_grounded_instruction(self, user_prompt: str, base_instruction: str) -> str:
