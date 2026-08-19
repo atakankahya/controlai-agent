@@ -26,9 +26,14 @@ WORKDIR /home/user/app
 # Install Python dependencies. llama-cpp-python compiles from source (no
 # prebuilt wheel is published for recent versions); cap build parallelism so
 # the compiler doesn't spawn enough jobs to OOM-kill the Spaces build machine.
+# Pin to a fixed AVX2+FMA target instead of NATIVE (avoids depending on the
+# build machine's exact CPU) or full auto-detection (which was the extra
+# compile cost that caused the OOM) -- AVX2/FMA are present on essentially
+# every x86-64 server CPU Spaces runs on, so this keeps inference fast
+# without the crash risk of a mismatched AVX-512 build.
 COPY requirements.txt .
 ENV CMAKE_BUILD_PARALLEL_LEVEL=1 \
-    CMAKE_ARGS="-DGGML_NATIVE=OFF"
+    CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_AVX512=OFF"
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
