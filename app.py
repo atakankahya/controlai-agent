@@ -83,13 +83,13 @@ def get_agent() -> ControlAIAgent:
 # releases it afterward). Outside of a ZeroGPU Space this decorator is a
 # harmless no-op, so it's safe to always wrap these.
 @spaces.GPU(duration=300)
-def _run_stream_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str]]):
-    yield from agent.run_stream(message, history=history)
+def _run_stream_on_gpu(message: str, history: list[dict[str, str]]):
+    yield from get_agent().run_stream(message, history=history)
 
 
 @spaces.GPU(duration=300)
-def _run_on_gpu(agent: ControlAIAgent, message: str, history: list[dict[str, str]]):
-    return agent.run(message, history=history, verbose=False)
+def _run_on_gpu(message: str, history: list[dict[str, str]]):
+    return get_agent().run(message, history=history, verbose=False)
 
 
 # ZeroGPU's startup check statically looks for a @spaces.GPU function wired
@@ -202,12 +202,10 @@ async def chat_stream_endpoint(req: ChatRequest):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    agent = get_agent()
-
     def event_generator():
         try:
             with inference_lock:
-                for event in _run_stream_on_gpu(agent, req.message.strip(), req.history):
+                for event in _run_stream_on_gpu(req.message.strip(), req.history):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'error': str(exc)}, ensure_ascii=False)}\n\n"
@@ -230,9 +228,8 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
 
     t0 = time.time()
     try:
-        agent = get_agent()
         with inference_lock:
-            result = _run_on_gpu(agent, req.message.strip(), req.history)
+            result = _run_on_gpu(req.message.strip(), req.history)
         elapsed = time.time() - t0
 
         # Collect tool traces
