@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -65,6 +66,9 @@ if STATIC_DIR.exists():
 
 # Initialize Agent
 agent_instance: ControlAIAgent | None = None
+# llama.cpp's Llama object is not safe for concurrent generation calls from
+# multiple threads; serialize every request through the single model instance.
+inference_lock = threading.Lock()
 
 
 def get_agent() -> ControlAIAgent:
@@ -181,8 +185,9 @@ async def chat_stream_endpoint(req: ChatRequest):
 
     def event_generator():
         try:
-            for event in agent.run_stream(req.message.strip(), history=req.history):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            with inference_lock:
+                for event in agent.run_stream(req.message.strip(), history=req.history):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'error': str(exc)}, ensure_ascii=False)}\n\n"
 
@@ -205,7 +210,8 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
     t0 = time.time()
     try:
         agent = get_agent()
-        result = agent.run(req.message.strip(), history=req.history, verbose=False)
+        with inference_lock:
+            result = agent.run(req.message.strip(), history=req.history, verbose=False)
         elapsed = time.time() - t0
 
         # Collect tool traces
