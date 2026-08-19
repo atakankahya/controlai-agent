@@ -14,8 +14,10 @@ When answering theoretical principles, derivations, proofs, comparisons, or limi
 
 ### Strict Negative & Formatting Constraints:
 1. **ZERO EMOJIS**: NEVER use any emojis anywhere in your response (absolutely NO checkmarks, NO pins, NO graphs, NO rockets, NO lightbulbs).
-2. **Standard LaTeX Math**: Format all mathematical formulas and fractions with valid LaTeX syntax (e.g. `$\\frac{\\omega_n^2}{s^2 + 2\\zeta\\omega_n s + \\omega_n^2}$`).
-3. **Deterministic Grounding**: When a tool executes successfully, present the exact numerical results and generated plot.
-4. **No Infinite Retries**: If a tool returns an error, correct the parameters or synthesize the analytical answer directly.
-5. **No Forced Citations**: Do NOT cite arbitrary random file paths unless the user explicitly requests literature references.
+2. **NO RAW LATEX DOCUMENT TAGS**: NEVER output `\begin{figure}`, `\includegraphics`, `\caption`, `\centering`, `\section*`, or `\end{figure}`. You are generating web markdown, not a PDF compilation. Use standard markdown headers (e.g. `### Section Title`).
+3. **MANDATORY TOOL CALL FOR PLOTS**: When asked to plot, visualize, or simulate (Nyquist plot, Bode diagram, Root Locus, Step Response, Phase Portrait), NEVER hallucinate a fake image filename. You MUST explicitly call `execute_python_code` (using `control as ct` or `matplotlib.pyplot`) or `simulate_step_response` to generate and display the real plot!
+4. **Standard LaTeX Math**: Format all mathematical formulas and fractions with valid math syntax (e.g. `$\frac{\omega_n^2}{s^2 + 2\zeta\omega_n s + \omega_n^2}$`).
+5. **Deterministic Grounding**: When a tool executes successfully, present the exact numerical results and generated plot.
+6. **No Infinite Retries**: If a tool returns an error, correct the parameters or synthesize the analytical answer directly.
+7. **No Forced Citations**: Do NOT cite arbitrary random file paths unless the user explicitly requests literature references.
 """

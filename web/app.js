@@ -145,6 +145,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const mathPlaceholders = [];
     let text = rawText;
 
+    // Clean up any raw LaTeX document structure artifacts
+    text = text.replace(/\\section\*?\{([\s\S]*?)\}/g, '### $1\n\n');
+    text = text.replace(/\\subsection\*?\{([\s\S]*?)\}/g, '#### $1\n\n');
+    text = text.replace(/\\subsubsection\*?\{([\s\S]*?)\}/g, '##### $1\n\n');
+    text = text.replace(/\\begin\{figure\}[\s\S]*?\\end\{figure\}/g, (match) => {
+      const capMatch = match.match(/\\caption\{([\s\S]*?)\}/);
+      const imgMatch = match.match(/\\includegraphics.*?\{([^\}]+)\}/);
+      let out = '';
+      if (imgMatch) {
+        const fname = imgMatch[1].trim();
+        out += `\n\n![${capMatch ? capMatch[1] : 'Simulation Plot'}](/plots/${fname})\n\n`;
+      }
+      if (capMatch && !imgMatch) {
+        out += `\n\n*${capMatch[1]}*\n\n`;
+      }
+      return out;
+    });
+    text = text.replace(/\\(centering|begin\{center\}|end\{center\})/g, '');
+    text = text.replace(/\\includegraphics.*?\{([^\}]+)\}/g, '![$1](/plots/$1)');
+    text = text.replace(/\\caption\{([\s\S]*?)\}/g, '*$1*');
+
     // 1. Extract Display Math: $$ ... $$
     text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
       const ph = `@@MATH_BLOCK_${mathPlaceholders.length}@@`;
