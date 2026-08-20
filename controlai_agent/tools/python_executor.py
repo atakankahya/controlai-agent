@@ -29,7 +29,27 @@ PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 @registry.register(
     name="execute_python_code",
-    description="Execute Python code for control engineering, numerical simulations, differential equations, optimization, and signal plotting (similar to a Jupyter Notebook cell). Can use numpy (np), scipy (scipy), scipy.signal (signal), scipy.linalg (linalg), control (ct, control), and matplotlib.pyplot (plt). Captures stdout and any generated Matplotlib figures.",
+    description=(
+        "Execute Python code for control engineering, numerical simulations, differential equations, "
+        "optimization, and signal plotting (similar to a Jupyter Notebook cell). Can use numpy (np), "
+        "scipy (scipy), scipy.signal (signal), scipy.linalg (linalg), control (ct, control), and "
+        "matplotlib.pyplot (plt). Captures stdout and any generated Matplotlib figures. "
+        "IMPORTANT -- the `control` package (ct) takes POSITIONAL arguments only, never num=/den= "
+        "or sys1=/sys2= keywords (they raise 'Needs 1, 2, or 3 arguments'): "
+        "ct.tf(num, den) not ct.tf(num=num, den=den); "
+        "ct.feedback(sys1, sys2=1, sign=-1) for a closed loop; "
+        "ct.series(sys1, sys2) and ct.parallel(sys1, sys2); "
+        "ct.step_response(sys, T=t_array) returns (T, yout); "
+        "ct.poles(sys) and ct.zeros(sys) for pole/zero locations; "
+        "ct.bode(sys) / ct.bode_plot(sys) is PLOT-ONLY and does not return (mag, phase, omega) arrays "
+        "-- for numeric Bode data use resp = ct.frequency_response(sys, omega); "
+        "resp.magnitude, resp.phase (radians), resp.omega. "
+        "Every other registered tool (continuous_lqr, discrete_lqr, place_state_feedback, "
+        "stability_margins, exact_zoh, etc.) is ALSO directly callable here by its exact name with "
+        "its normal arguments -- e.g. `result = place_state_feedback(A=A, B=B, desired_poles=poles)`. "
+        "Each returns a dict just like the standalone tool call does, so pull out the field you need, "
+        "e.g. `K = np.array(result['K'])`, before using it in further computation."
+    ),
     parameters_schema={
         "type": "object",
         "properties": {
@@ -59,7 +79,7 @@ def execute_python_code(code: str) -> dict[str, Any]:
     plt.rcParams["grid.linestyle"] = ":"
     plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Helvetica", "Arial"]
 
-    exec_globals = {
+    exec_globals: dict[str, Any] = {
         "np": np,
         "numpy": np,
         "scipy": scipy,
@@ -70,6 +90,12 @@ def execute_python_code(code: str) -> dict[str, Any]:
         "ct": ct,
         "control": ct,
     }
+    # Every other registered deterministic tool (continuous_lqr, place_state_feedback,
+    # stability_margins, ...) is also callable directly by name here, with its
+    # normal keyword arguments and dict return value -- the model otherwise
+    # reasonably expects a tool it knows to be usable in code it writes, not
+    # only through the separate tool-call protocol, and hits a NameError.
+    exec_globals.update(registry.get_callables(exclude={"execute_python_code"}))
 
     saved_plots = []
 

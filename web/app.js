@@ -327,14 +327,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function deleteSession(id) {
+    const wasCurrent = currentSessionId === id;
     sessions = sessions.filter((s) => s.id !== id);
     saveSessions();
-    if (currentSessionId === id) {
-      currentSessionId = sessions.length > 0 ? sessions[0].id : null;
-      if (!currentSessionId) {
-        startNewSession();
-        return;
-      }
+
+    if (!wasCurrent) {
+      // Deleting a different chat must never touch the thread that's on
+      // screen -- rebuilding it here would wipe an in-progress streaming
+      // response out from under itself.
+      renderHistorySidebar();
+      return;
+    }
+
+    currentSessionId = sessions.length > 0 ? sessions[0].id : null;
+    if (!currentSessionId) {
+      startNewSession();
+      return;
     }
     renderHistorySidebar();
     renderActiveSession();
@@ -451,6 +459,10 @@ document.addEventListener('DOMContentLoaded', () => {
     entry.appendChild(content);
     chatThread.appendChild(entry);
     return entry;
+  }
+
+  function workingIndicatorHtml(label) {
+    return `<span class="generating-indicator">${label}<span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`;
   }
 
   function escapeHtml(text) {
@@ -618,7 +630,7 @@ document.addEventListener('DOMContentLoaded', () => {
     botEntry.className = 'message-entry bot';
     botEntry.innerHTML = `
       <div class="message-label">ControlAI</div>
-      <div class="message-content"><span class="generating-indicator">Working...</span></div>
+      <div class="message-content">${workingIndicatorHtml('Working')}</div>
     `;
     chatThread.appendChild(botEntry);
     smartScroll();
@@ -675,7 +687,7 @@ document.addEventListener('DOMContentLoaded', () => {
               const thoughtHtml = renderThoughtBox(thoughts, true);
               const textHtml = accumulatedText 
                 ? `<div class="response-body">${renderMarkdownWithKaTeX(accumulatedText)}<span class="streaming-cursor"></span></div>` 
-                : `<div class="response-body"><span class="generating-indicator">Working...</span><span class="streaming-cursor"></span></div>`;
+                : `<div class="response-body">${workingIndicatorHtml('Working')}<span class="streaming-cursor"></span></div>`;
               contentBox.innerHTML = thoughtHtml + textHtml;
               smartScroll();
             } else if (event.type === 'token') {

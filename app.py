@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import queue
 import shutil
 import sys
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -27,12 +29,24 @@ if str(PROJECT_ROOT) not in sys.path:
 from controlai_agent.orchestrator import ControlAIAgent
 from controlai_rag.chunker import chunk_document
 from controlai_rag.document_loader import load_single_file
-from controlai_rag.index import ControlRAGIndex
+from controlai_rag.index import get_shared_index
+
+# MLX keeps its compute stream in thread-local state: the model must be
+# loaded on the exact same OS thread that later runs generation, or MLX
+# raises "There is no Stream(cpu, 0) in current thread." Starlette's default
+# StreamingResponse threadpool picks a different worker thread per request,
+# which breaks that invariant. Routing every agent call through this single
+# dedicated worker thread keeps MLX on one consistent thread for the whole
+# process lifetime, and -- as a bonus -- a max_workers=1 executor naturally
+# serializes every request through the one model instance (llama.cpp's Llama
+# object also isn't safe for concurrent calls from multiple threads).
+inference_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="controlai-inference")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Pre-loading ControlAI Core Engine on startup...")
-    get_agent()
+    await asyncio.get_event_loop().run_in_executor(inference_executor, get_agent)
     print("ControlAI Core Engine is online and ready for traffic.")
     yield
 
@@ -64,9 +78,6 @@ if STATIC_DIR.exists():
 
 # Initialize Agent
 agent_instance: ControlAIAgent | None = None
-# llama.cpp's Llama object is not safe for concurrent generation calls from
-# multiple threads; serialize every request through the single model instance.
-inference_lock = threading.Lock()
 
 
 def get_agent() -> ControlAIAgent:
@@ -179,8 +190,10 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
             chunks = chunk_document(p)
             new_chunks.extend(chunks)
 
-        index_dir = PROJECT_ROOT / "data" / "rag_index"
-        index = ControlRAGIndex(index_dir)
+        # Mutating the shared index makes the upload live for the running
+        # agent immediately -- a fresh instance would only persist to disk and
+        # stay invisible until restart.
+        index = get_shared_index()
         index.add_chunks(new_chunks)
 
         return {
@@ -202,13 +215,33 @@ async def chat_stream_endpoint(req: ChatRequest):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    def event_generator():
+    message = req.message.strip()
+    history = req.history
+    event_queue: queue.Queue = queue.Queue()
+    _DONE = object()
+
+    def _produce() -> None:
+        # Runs entirely on inference_executor's single dedicated thread --
+        # the same thread the model was loaded on -- so MLX's thread-local
+        # stream stays valid.
         try:
-            with inference_lock:
-                for event in _run_stream_on_gpu(req.message.strip(), req.history):
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            for event in _run_stream_on_gpu(message, history):
+                event_queue.put(event)
         except Exception as exc:
-            yield f"data: {json.dumps({'type': 'error', 'error': str(exc)}, ensure_ascii=False)}\n\n"
+            event_queue.put({"type": "error", "error": str(exc)})
+        finally:
+            event_queue.put(_DONE)
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(inference_executor, _produce)
+        while True:
+            # Draining the queue never touches MLX, so this can safely run on
+            # the default threadpool.
+            event = await loop.run_in_executor(None, event_queue.get)
+            if event is _DONE:
+                break
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -228,8 +261,8 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
 
     t0 = time.time()
     try:
-        with inference_lock:
-            result = _run_on_gpu(req.message.strip(), req.history)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(inference_executor, _run_on_gpu, req.message.strip(), req.history)
         elapsed = time.time() - t0
 
         # Collect tool traces

@@ -87,7 +87,12 @@ def discrete_lqr(
 
 @registry.register(
     name="place_state_feedback",
-    description="Compute state feedback gain matrix K such that eig(A - B*K) matches target desired poles.",
+    description=(
+        "Compute state feedback gain matrix K such that eig(A - B*K) matches target desired poles. "
+        "Each entry of desired_poles is either a real number (a real pole) or a [real, imag] pair "
+        "(one half of a complex-conjugate pair -- e.g. targeting a damping ratio/natural frequency "
+        "needs poles like [-2, 3] and [-2, -3], both halves listed explicitly)."
+    ),
     parameters_schema={
         "type": "object",
         "properties": {
@@ -95,28 +100,46 @@ def discrete_lqr(
             "B": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
             "desired_poles": {
                 "type": "array",
-                "items": {"type": "number"},
-                "description": "Target closed-loop pole locations",
+                "items": {
+                    "oneOf": [
+                        {"type": "number"},
+                        {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                    ]
+                },
+                "description": "Target closed-loop pole locations: a number for a real pole, or [real, imag] for a complex one.",
             },
         },
         "required": ["A", "B", "desired_poles"],
     },
 )
 def place_state_feedback(
-    A: list[list[float]], B: list[list[float]], desired_poles: list[float]
+    A: list[list[float]], B: list[list[float]], desired_poles: list[float | list[float]]
 ) -> dict[str, Any]:
     A_mat = np.array(A, dtype=float)
     B_mat = np.array(B, dtype=float)
-    des = np.array(desired_poles, dtype=float)
+    # Each pole is a plain number (real pole) or a [real, imag] pair.
+    desired_poles = [complex(p[0], p[1]) if isinstance(p, (list, tuple)) else complex(p) for p in desired_poles]
+    # dtype=complex, not float: targeting a specific damping ratio / natural
+    # frequency means passing a complex-conjugate pole pair, which is the
+    # normal case for a 2nd-order-or-higher design, not an edge case. Forcing
+    # float here silently discarded the imaginary part, turning a legitimate
+    # conjugate pair into the SAME real pole listed twice -- which then fails
+    # outright for a SISO system since place_poles cannot repeat a pole more
+    # than rank(B) times.
+    des = np.array(desired_poles, dtype=complex)
     placed = signal.place_poles(A_mat, B_mat, des)
-    K = placed.gain_matrix
+    # K is mathematically real for real A, B with a properly conjugate-paired
+    # desired_poles; drop the negligible numerical imaginary residue so the
+    # result is JSON-serializable (a genuinely unpaired complex pole is
+    # rejected by place_poles itself before this line is reached).
+    K = placed.gain_matrix.real
     closed_poles = np.linalg.eigvals(A_mat - B_mat @ K)
 
-    v_report = verifier.verify_pole_placement(A_mat, B_mat, K, desired_poles)
+    v_report = verifier.verify_pole_placement(A_mat, B_mat, K, list(des))
     return {
         "K": K.tolist(),
         "closed_loop_poles": [[float(p.real), float(p.imag)] for p in closed_poles],
-        "target_poles": desired_poles,
+        "target_poles": [[float(p.real), float(p.imag)] for p in des],
         "verification": v_report,
     }
 

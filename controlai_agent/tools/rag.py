@@ -5,9 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from controlai_agent.registry import registry
-from controlai_rag.index import ControlRAGIndex
-
-rag_index = ControlRAGIndex()
+from controlai_rag.index import get_shared_index
 
 
 @registry.register(
@@ -40,7 +38,9 @@ def search_control_references(
     top_k: int = 3,
     source_filter: str | None = None,
 ) -> dict[str, Any]:
-    hits = rag_index.search(query=query, top_k=top_k, source_filter=source_filter)
+    # Resolved per call (not at import) so newly uploaded documents are visible
+    # immediately, without restarting the server.
+    hits = get_shared_index().search(query=query, top_k=top_k, source_filter=source_filter)
     if not hits:
         return {
             "query": query,
@@ -51,7 +51,10 @@ def search_control_references(
     formatted_passages = []
     for hit in hits:
         formatted_passages.append({
-            "citation": f"[{hit['filename']}:{hit.get('page') or 'sec'}]",
+            "citation": (
+                f"[{hit.get('source_name') or hit['filename']}"
+                + (f", p. {hit['page']}]" if hit.get("page") else "]")
+            ),
             "source_path": hit["source"],
             "relevance_score": hit["score"],
             "content": hit["text"][:600],

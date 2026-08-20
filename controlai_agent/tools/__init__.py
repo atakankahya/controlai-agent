@@ -2,6 +2,7 @@
 
 from controlai_agent.tools import (
     linear,
+    matrix_ops,
     frequency,
     synthesis,
     estimation,
@@ -16,6 +17,7 @@ from controlai_agent.tools import (
 
 __all__ = [
     "linear",
+    "matrix_ops",
     "frequency",
     "synthesis",
     "estimation",

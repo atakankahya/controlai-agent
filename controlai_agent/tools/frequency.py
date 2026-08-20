@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy import signal
 
 from controlai_agent.registry import registry
+
+ARTIFACT_DIR = Path("outputs/plots")
 
 
 @registry.register(
@@ -153,4 +159,217 @@ def routh_hurwitz_analysis(coefficients: list[float]) -> dict[str, Any]:
         "sign_changes_rhp_poles": sign_changes,
         "is_hurwitz_stable": is_hurwitz,
         "roots": [[float(r.real), float(r.imag)] for r in roots],
+    }
+
+
+@registry.register(
+    name="nyquist_analysis",
+    description=(
+        "Compute the Nyquist plot of an open-loop transfer function L(s) = num(s)/den(s), count "
+        "encirclements of the critical point -1+0j, and apply the Nyquist stability criterion "
+        "Z = N + P to determine closed-loop stability. Saves a PNG Nyquist diagram."
+    ),
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "numerator": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Open-loop numerator coefficients in descending powers",
+            },
+            "denominator": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Open-loop denominator coefficients in descending powers",
+            },
+            "omega_max": {"type": "number", "default": 100.0, "description": "Maximum frequency in rad/s"},
+        },
+        "required": ["numerator", "denominator"],
+    },
+)
+def nyquist_analysis(
+    numerator: list[float],
+    denominator: list[float],
+    omega_max: float = 100.0,
+) -> dict[str, Any]:
+    num = np.array(numerator, dtype=float)
+    den = np.array(denominator, dtype=float)
+
+    # Open-loop poles: P is the count in the open right-half plane. Poles on
+    # the imaginary axis (e.g. an integrator at the origin) are excluded --
+    # the standard Nyquist contour indents around them.
+    ol_poles = np.roots(den) if len(den) > 1 else np.array([])
+    P = int(np.sum(np.real(ol_poles) > 1e-9))
+    n_origin = int(np.sum(np.abs(ol_poles) < 1e-9))
+
+    w = np.logspace(-3, np.log10(max(omega_max, 1e-2)), 4000)
+    _, H = signal.freqresp(signal.TransferFunction(num, den), w=w)
+
+    # Z (closed-loop RHP poles) and P (open-loop RHP poles) are both exact
+    # root counts, so the encirclement count follows exactly as N = Z - P.
+    # Numerically integrating the winding of L(jw)+1 instead is unreliable for
+    # systems with poles on the imaginary axis (a type-1 integrator here),
+    # where the Nyquist contour must indent around the origin -- that shortcut
+    # yields impossible results such as N = -1 with Z = -1.
+    closed_loop_poles = (
+        np.roots(np.polyadd(den, np.pad(num, (len(den) - len(num), 0))))
+        if len(den) >= len(num)
+        else np.array([])
+    )
+    Z = int(np.sum(np.real(closed_loop_poles) > 1e-9)) if closed_loop_poles.size else 0
+    N = Z - P
+
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    plot_path = ARTIFACT_DIR / f"nyquist_{abs(hash((str(numerator), str(denominator)))) % 10**8:08d}.png"
+
+    fig, ax = plt.subplots(figsize=(6.5, 6.0), dpi=140)
+    ax.plot(H.real, H.imag, color="#58a6ff", linewidth=1.8, label="$L(j\\omega)$, $\\omega > 0$")
+    ax.plot(H.real, -H.imag, color="#58a6ff", linewidth=1.0, linestyle="--", alpha=0.6, label="$\\omega < 0$ (mirror)")
+    ax.plot(-1.0, 0.0, "x", color="#f85149", markersize=11, markeredgewidth=2.5, label="Critical point $-1+0j$")
+    ax.axhline(0, color="gray", linewidth=0.7, alpha=0.5)
+    ax.axvline(0, color="gray", linewidth=0.7, alpha=0.5)
+    ax.set_title("Nyquist Diagram", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Real Axis")
+    ax.set_ylabel("Imaginary Axis")
+    ax.grid(True, linestyle=":", alpha=0.45)
+    lim = float(min(max(3.0, np.percentile(np.abs(H), 92)), 25.0))
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_aspect("equal", adjustable="box")
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(plot_path)
+    plt.close(fig)
+
+    return {
+        "status": "success",
+        "encirclements_N": N,
+        "open_loop_rhp_poles_P": P,
+        "open_loop_poles_at_origin": n_origin,
+        "closed_loop_rhp_poles_Z": Z,
+        "closed_loop_poles": [[float(p.real), float(p.imag)] for p in closed_loop_poles],
+        "is_closed_loop_stable": bool(Z == 0),
+        "criterion": "Z = N + P (Z = closed-loop RHP poles, N = clockwise encirclements of -1, P = open-loop RHP poles)",
+        "plot_path": str(plot_path),
+    }
+
+
+@registry.register(
+    name="root_locus_analysis",
+    description=(
+        "Compute the root locus of the closed-loop characteristic equation 1 + k*L(s) = 0 as the gain "
+        "k sweeps from 0 to infinity, for open-loop L(s) = num(s)/den(s). Returns open-loop poles and "
+        "zeros, asymptote angles and centroid, real-axis breakaway points, the imaginary-axis crossing "
+        "gain (critical gain for stability), and a PNG root locus plot."
+    ),
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "numerator": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Open-loop numerator coefficients in descending powers",
+            },
+            "denominator": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Open-loop denominator coefficients in descending powers",
+            },
+            "k_max": {"type": "number", "default": 100.0, "description": "Maximum gain k to sweep"},
+        },
+        "required": ["numerator", "denominator"],
+    },
+)
+def root_locus_analysis(
+    numerator: list[float],
+    denominator: list[float],
+    k_max: float = 100.0,
+) -> dict[str, Any]:
+    num = np.array(numerator, dtype=float)
+    den = np.array(denominator, dtype=float)
+
+    ol_zeros = np.roots(num) if len(num) > 1 else np.array([])
+    ol_poles = np.roots(den) if len(den) > 1 else np.array([])
+    n_p, n_z = len(ol_poles), len(ol_zeros)
+
+    # Asymptotes for the n_p - n_z branches heading to infinity
+    excess = n_p - n_z
+    asymptote_angles, centroid = [], None
+    if excess > 0:
+        centroid = float((np.sum(ol_poles).real - np.sum(ol_zeros).real) / excess)
+        asymptote_angles = [float((180.0 * (2 * i + 1)) / excess) for i in range(excess)]
+
+    # Sweep gain and collect closed-loop roots of den + k*num
+    gains = np.concatenate([[0.0], np.logspace(-3, np.log10(max(k_max, 1e-2)), 600)])
+    locus: list[np.ndarray] = []
+    for k in gains:
+        poly = np.polyadd(den, k * np.pad(num, (max(0, len(den) - len(num)), 0)))
+        locus.append(np.roots(poly))
+
+    # Imaginary-axis crossing: first gain where any root's real part turns >= 0
+    k_critical, w_crossing = None, None
+    for k, roots in zip(gains, locus):
+        if roots.size and np.any(np.real(roots) > 1e-9):
+            k_critical = float(k)
+            crossing = roots[np.argmax(np.real(roots))]
+            w_crossing = float(abs(crossing.imag))
+            break
+
+    # Breakaway/break-in points: real roots of d/ds[-den/num] = 0. Only those
+    # lying ON the locus count -- a real point belongs to the locus iff an odd
+    # number of real poles and zeros lie strictly to its right, so the
+    # remaining stationary points must be discarded.
+    real_singularities = [float(p.real) for p in ol_poles if abs(p.imag) < 1e-8]
+    real_singularities += [float(z.real) for z in ol_zeros if abs(z.imag) < 1e-8]
+
+    def _on_real_axis_locus(sigma: float) -> bool:
+        to_right = sum(1 for v in real_singularities if v > sigma + 1e-9)
+        return to_right % 2 == 1
+
+    breakaway: list[float] = []
+    try:
+        dnum, dden = np.polyder(num), np.polyder(den)
+        crit = np.polysub(np.polymul(dden, num), np.polymul(den, dnum))
+        for r in np.roots(crit):
+            if abs(r.imag) < 1e-8 and _on_real_axis_locus(float(r.real)):
+                breakaway.append(round(float(r.real), 6))
+    except Exception:
+        pass
+
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    plot_path = ARTIFACT_DIR / f"root_locus_{abs(hash((str(numerator), str(denominator)))) % 10**8:08d}.png"
+
+    fig, ax = plt.subplots(figsize=(7.0, 5.5), dpi=140)
+    max_branches = max((r.size for r in locus), default=0)
+    for b in range(max_branches):
+        pts = np.array([r[b] for r in locus if r.size > b])
+        ax.plot(pts.real, pts.imag, color="#58a6ff", linewidth=1.0, alpha=0.85)
+    if n_p:
+        ax.plot(ol_poles.real, ol_poles.imag, "x", color="#f85149", markersize=10, markeredgewidth=2.2, label="Open-loop poles")
+    if n_z:
+        ax.plot(ol_zeros.real, ol_zeros.imag, "o", mfc="none", color="#3fb950", markersize=9, markeredgewidth=2.0, label="Open-loop zeros")
+    ax.axhline(0, color="gray", linewidth=0.7, alpha=0.5)
+    ax.axvline(0, color="gray", linewidth=0.7, alpha=0.5)
+    ax.set_title("Root Locus", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Real Axis")
+    ax.set_ylabel("Imaginary Axis")
+    ax.grid(True, linestyle=":", alpha=0.45)
+    if n_p or n_z:
+        ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(plot_path)
+    plt.close(fig)
+
+    return {
+        "status": "success",
+        "open_loop_poles": [[float(p.real), float(p.imag)] for p in ol_poles],
+        "open_loop_zeros": [[float(z.real), float(z.imag)] for z in ol_zeros],
+        "num_asymptotes": excess,
+        "asymptote_centroid": centroid,
+        "asymptote_angles_deg": asymptote_angles,
+        "breakaway_points_real_axis": sorted(set(breakaway)),
+        "critical_gain_k_at_instability": k_critical,
+        "imaginary_axis_crossing_freq_rad_s": w_crossing,
+        "is_stable_for_all_swept_gains": bool(k_critical is None),
+        "plot_path": str(plot_path),
     }

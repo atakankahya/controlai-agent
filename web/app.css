@@ -517,7 +517,7 @@ body {
 
 .code-block-wrapper pre code {
   font-family: 'JetBrains Mono', 'Menlo', monospace !important;
-  font-size: 13px !important;
+  font-size: calc(var(--chat-font-size) * 0.87) !important;
   line-height: 1.6 !important;
   background: transparent !important;
   padding: 0 !important;
@@ -549,10 +549,28 @@ body {
 }
 
 .generating-indicator {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.generating-indicator .dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: generating-pulse 1.1s ease-in-out infinite;
+}
+
+.generating-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
+.generating-indicator .dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes generating-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
 }
 
 .thought-summary {
@@ -590,7 +608,7 @@ body {
   padding: 10px 14px;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(var(--chat-font-size) * 0.73);
   line-height: 1.6;
   border-top: 1px solid var(--border-color);
   white-space: pre-wrap;
@@ -630,7 +648,7 @@ body {
 
 .plot-caption {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(var(--chat-font-size) * 0.73);
   color: var(--text-muted);
   margin-top: 6px;
 }
