@@ -8,6 +8,7 @@ import os
 import queue
 import shutil
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -26,27 +27,50 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from controlai_agent.orchestrator import ControlAIAgent
+from controlai_agent.orchestrator import HAS_MLX, ControlAIAgent
 from controlai_rag.chunker import chunk_document
 from controlai_rag.document_loader import load_single_file
 from controlai_rag.index import get_shared_index
 
 # MLX keeps its compute stream in thread-local state: the model must be
 # loaded on the exact same OS thread that later runs generation, or MLX
-# raises "There is no Stream(cpu, 0) in current thread." Starlette's default
-# StreamingResponse threadpool picks a different worker thread per request,
-# which breaks that invariant. Routing every agent call through this single
-# dedicated worker thread keeps MLX on one consistent thread for the whole
-# process lifetime, and -- as a bonus -- a max_workers=1 executor naturally
-# serializes every request through the one model instance (llama.cpp's Llama
-# object also isn't safe for concurrent calls from multiple threads).
-inference_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="controlai-inference")
+# raises "There is no Stream(cpu, 0) in current thread." Routing every agent
+# call through this single dedicated worker thread keeps MLX on one
+# consistent thread for the whole process lifetime.
+#
+# This must NEVER be used for the CUDA/ZeroGPU path: ZeroGPU's `spaces`
+# library only intercepts CUDA calls within the exact context it manages
+# (the main thread during startup; the request-handling context for
+# @spaces.GPU calls). Moving a CUDA-touching call into this manually-created
+# thread let a real `torch._C._cuda_init()` leak through outside any
+# @spaces.GPU context and crashed the Space on startup:
+#   "Low-level CUDA init reached. ZeroGPU's PyTorch CUDA emulation mode
+#    did not intercept a CUDA operation in your code."
+# HAS_MLX is only ever True on the machine that actually has mlx_lm
+# installed (Apple Silicon) -- never on a HF Spaces Linux/CUDA container --
+# so gating on it keeps MLX's fix local while restoring the CUDA/GGUF path
+# to calling directly on whatever thread FastAPI/spaces already controls,
+# exactly as it worked before.
+inference_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="controlai-inference") if HAS_MLX else None
+# llama.cpp's Llama object is not safe for concurrent generation calls from
+# multiple threads; on the non-MLX path (no dedicated executor serializing
+# things for us) a plain lock does that job instead.
+inference_lock = threading.Lock()
+
+
+async def _run_inference(fn, *args):
+    """Run an inference call on the MLX-safe dedicated thread if MLX is in
+    play, otherwise directly (correct for CUDA/ZeroGPU and GGUF)."""
+    if inference_executor is not None:
+        return await asyncio.get_event_loop().run_in_executor(inference_executor, fn, *args)
+    with inference_lock:
+        return fn(*args)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Pre-loading ControlAI Core Engine on startup...")
-    await asyncio.get_event_loop().run_in_executor(inference_executor, get_agent)
+    await _run_inference(get_agent)
     print("ControlAI Core Engine is online and ready for traffic.")
     yield
 
@@ -217,31 +241,48 @@ async def chat_stream_endpoint(req: ChatRequest):
 
     message = req.message.strip()
     history = req.history
-    event_queue: queue.Queue = queue.Queue()
-    _DONE = object()
 
-    def _produce() -> None:
-        # Runs entirely on inference_executor's single dedicated thread --
-        # the same thread the model was loaded on -- so MLX's thread-local
-        # stream stays valid.
-        try:
-            for event in _run_stream_on_gpu(message, history):
-                event_queue.put(event)
-        except Exception as exc:
-            event_queue.put({"type": "error", "error": str(exc)})
-        finally:
-            event_queue.put(_DONE)
+    if inference_executor is not None:
+        # MLX path: a persistent dedicated thread is required (see the
+        # inference_executor comment above), so bridge it into the async
+        # response via a queue -- Starlette's own rotating threadpool would
+        # violate MLX's single-thread requirement.
+        event_queue: queue.Queue = queue.Queue()
+        _DONE = object()
 
-    async def event_generator():
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(inference_executor, _produce)
-        while True:
-            # Draining the queue never touches MLX, so this can safely run on
-            # the default threadpool.
-            event = await loop.run_in_executor(None, event_queue.get)
-            if event is _DONE:
-                break
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        def _produce() -> None:
+            try:
+                with inference_lock:
+                    for event in _run_stream_on_gpu(message, history):
+                        event_queue.put(event)
+            except Exception as exc:
+                event_queue.put({"type": "error", "error": str(exc)})
+            finally:
+                event_queue.put(_DONE)
+
+        async def event_generator():
+            loop = asyncio.get_event_loop()
+            loop.run_in_executor(inference_executor, _produce)
+            while True:
+                # Draining the queue never touches MLX, so this can safely
+                # run on the default threadpool.
+                event = await loop.run_in_executor(None, event_queue.get)
+                if event is _DONE:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    else:
+        # CUDA/ZeroGPU/GGUF path: a plain sync generator handed directly to
+        # StreamingResponse, exactly as this ran before the MLX fix existed.
+        # Starlette wraps this in its own threadpool (iterate_in_threadpool),
+        # which -- unlike a manually created ThreadPoolExecutor -- is a
+        # context ZeroGPU's CUDA interception correctly recognizes.
+        def event_generator():
+            try:
+                with inference_lock:
+                    for event in _run_stream_on_gpu(message, history):
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -261,8 +302,7 @@ async def chat_endpoint(req: ChatRequest) -> ChatResponse:
 
     t0 = time.time()
     try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(inference_executor, _run_on_gpu, req.message.strip(), req.history)
+        result = await _run_inference(_run_on_gpu, req.message.strip(), req.history)
         elapsed = time.time() - t0
 
         # Collect tool traces
