@@ -626,7 +626,8 @@ class ControlAIAgent:
                 "[Nise, Control Systems Engineering, p. 583]); never invent a citation and never print a "
                 "raw filename, file extension, or course code."
             )
-        except Exception:
+        except Exception as exc:
+            print(f"[_get_grounded_instruction] FAILED, continuing ungrounded: {type(exc).__name__}: {exc}")
             return base_instruction
 
     def _direct_answer(
@@ -664,7 +665,11 @@ class ControlAIAgent:
             )
             _, cleaned = _extract_tool_calls(self._generate(rendered, max_tokens=max_tokens))
             return cleaned
-        except Exception:
+        except Exception as exc:
+            # This is the last line of defense before the user sees the canned
+            # placeholder -- if it fails, that failure must leave a trace
+            # instead of vanishing, or a real bug here is undiagnosable.
+            print(f"[_direct_answer] FAILED for prompt {user_prompt[:80]!r}: {type(exc).__name__}: {exc}")
             return ""
 
     def _execute_with_provenance(
@@ -820,6 +825,13 @@ class ControlAIAgent:
         # is stripped down to "" and showing final_output would leak a raw
         # <tool_call>{...}</tool_call> JSON blob straight into the chat.
         final_response = clean_final or self._direct_answer(user_prompt, effective_sys, history)
+        if not final_response:
+            # _direct_answer reliably produces real text when tested in
+            # isolation, so an empty result here is most likely a transient
+            # failure (resource contention, a stray exception) rather than a
+            # repeatable one -- one retry clears most of those before giving
+            # up and showing the placeholder.
+            final_response = self._direct_answer(user_prompt, effective_sys, history)
         if not final_response:
             final_response = "The computational analysis has been completed as detailed above."
         return AgentResult(
@@ -1011,6 +1023,13 @@ class ControlAIAgent:
         final_text = clean_synth
         # Strip any lingering raw json
         final_text = re.sub(r"\{\s*[\"']name[\"']\s*:[\s\S]*?\}\s*\}", "", final_text).strip()
+        if not final_text:
+            # A fresh, tool-free, minimal-context generation reliably produces
+            # real text even when the tool-heavy synthesis turn degenerated --
+            # try it (twice, for a transient failure) before the placeholder.
+            final_text = self._direct_answer(user_prompt, effective_sys, history)
+            if not final_text:
+                final_text = self._direct_answer(user_prompt, effective_sys, history)
         if not final_text:
             final_text = "The computational analysis and simulation have been executed successfully as detailed above."
 
