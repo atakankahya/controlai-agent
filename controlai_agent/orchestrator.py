@@ -102,6 +102,12 @@ def close_unbalanced_json(raw: str) -> str:
     repaired = raw
     if in_string:
         repaired += '"'
+    # A generation cut off by the token budget mid-array/object usually stops
+    # right after a comma (about to write the next element) -- a dangling
+    # trailing comma is invalid JSON even once the brackets below are
+    # balanced ("[1, 0, 0,]" still fails to parse), so drop it first.
+    if not in_string:
+        repaired = re.sub(r",\s*$", "", repaired)
     for opener in reversed(stack):
         repaired += "}" if opener == "{" else "]"
     return repaired
@@ -406,17 +412,51 @@ class ParameterProvenance:
         return False
 
 
+# Real control-engineering coefficient/numerator/denominator arrays are
+# essentially always short -- a 10th-order polynomial (already an extreme
+# hand-solved case) has 11 coefficients. A flat numeric array cannot be
+# provenance-traced the way a matrix can (a legitimately *expanded* factored
+# polynomial, e.g. (s+1)(s+2)(s+3) -> [1,6,11,6], never appears verbatim in
+# the user's text, so a strict "must match the conversation" rule would
+# wrongly block correct derivations). Instead this catches the actual
+# observed failure mode directly: a runaway repetition loop, where a small
+# model gets stuck emitting the same value and the token budget cuts it off
+# mid-array -- e.g. 300+ elements of mostly zeros for routh_hurwitz_analysis
+# on a question that never gave it a polynomial at all.
+_MAX_SANE_1D_ARRAY_LEN = 25
+_MAX_IDENTICAL_RUN = 6
+
+
+def _degenerate_array_reason(values: list) -> str | None:
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        return None
+    if len(values) > _MAX_SANE_1D_ARRAY_LEN:
+        return f"has {len(values)} elements, far beyond any real control-engineering array of this kind"
+    run = 1
+    for i in range(1, len(values)):
+        run = run + 1 if values[i] == values[i - 1] else 1
+        if run >= _MAX_IDENTICAL_RUN:
+            return f"repeats the value {values[i]!r} {run}+ times in a row -- a runaway generation loop, not real data"
+    return None
+
+
 def _check_parameter_provenance(
     tool_args: dict[str, Any], messages: list[dict[str, Any]]
-) -> tuple[str, Any] | None:
-    """Return (param_name, value) for the first fabricated matrix, else None."""
+) -> tuple[str, Any, str] | None:
+    """Return (param_name, value, reason) for the first bad matrix/array, else None."""
     provenance = ParameterProvenance(messages)
     for param, value in tool_args.items():
         if param in _PROVENANCE_EXEMPT_PARAMS:
             continue
-        if isinstance(value, list) and value and isinstance(value[0], list):
+        if not (isinstance(value, list) and value):
+            continue
+        if isinstance(value[0], list):
             if not provenance.verify(value):
-                return param, value
+                return param, value, "was not provided by the user in this conversation and did not come from any prior tool result"
+        else:
+            reason = _degenerate_array_reason(value)
+            if reason:
+                return param, value, reason
     return None
 
 
@@ -685,17 +725,21 @@ class ControlAIAgent:
         except Exception:
             fabricated = None  # the guard must never take down a legitimate call
         if fabricated is not None:
-            param, value = fabricated
+            param, value, reason = fabricated
+            # Never echo a runaway array (possibly hundreds of elements) back
+            # into the context -- it wastes the token budget and risks
+            # priming the exact same repetition pathology again.
+            shown = value if len(json.dumps(value)) < 200 else f"[{len(value)}-element array, truncated]"
             return {
                 "status": "error",
                 "error_type": "FabricatedParameter",
                 "error": (
-                    f"REFUSED: the matrix passed as '{param}' = {json.dumps(value)} was not provided by "
-                    f"the user in this conversation and did not come from any prior tool result. Inventing "
-                    f"parameter values is forbidden. Do NOT retry this tool with a different guessed "
-                    f"'{param}'. In your final answer, tell the user that '{param}' is required for this "
-                    f"computation and ask them to provide it, and answer whatever part of their question "
-                    f"does not need it."
+                    f"REFUSED: the value passed as '{param}' ({shown}) {reason}. Inventing or "
+                    f"malformed parameter values is forbidden. Do NOT retry this tool with another "
+                    f"guessed or partially-repeated '{param}' -- if you don't actually have a concrete "
+                    f"value for it, this tool cannot be used for this question. Answer from your own "
+                    f"knowledge or the retrieved reference passages instead, or tell the user what's "
+                    f"missing."
                 ),
             }
         return self.registry.execute(tool_name, tool_args)
