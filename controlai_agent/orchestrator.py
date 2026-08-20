@@ -518,6 +518,32 @@ def _needs_tools(user_prompt: str) -> bool:
     return any(kw in lower for kw in _COMPUTATION_KEYWORDS)
 
 
+def _fabrication_refusal_note(refusals: list[str]) -> str:
+    """Extra synthesis instruction appended when a tool call was refused for
+    inventing a parameter.
+
+    Without this, the model's forced final-answer turn happily hallucinates a
+    plausible-looking numeric replacement anyway: observed directly with
+    sft_v2 on "design an LQR controller for A = [[0, 1], [-2, -3]]" (no B, Q,
+    R given) -- the tool call was correctly REFUSED by the provenance guard,
+    but the final prose still confidently printed a fully invented gain
+    $K = [1.83, 1.83]$, silently routing around its own refusal. The system
+    prompt already forbids this (rule 6), but that alone doesn't hold on a 4B
+    model any more than the provenance rules did in prose form -- so the
+    refusal is restated directly in the synthesis turn itself, where it can't
+    be missed.
+    """
+    if not refusals:
+        return ""
+    return (
+        "\n\nIMPORTANT: at least one tool call above was REFUSED for inventing a parameter you were never "
+        "given (see the REFUSED error message(s) in the tool results above for exactly which one and why). "
+        "This means you do NOT have enough information to compute a numeric answer for that part of the "
+        "request. Do NOT invent a substitute number, gain, matrix, or result to answer anyway -- state "
+        "plainly what is missing and ask the user for it instead of guessing."
+    )
+
+
 class ControlAIAgent:
     """Universal Control Engineering Agent supporting GGUF, Ollama C++, Apple MLX, and PyTorch."""
 
@@ -851,6 +877,7 @@ class ControlAIAgent:
         plots: list[str] = []
         called_signatures: set[str] = set()
         tool_call_counts: dict[str, int] = {}
+        fabrication_refusals: list[str] = []
 
         for step in range(1, self.max_tool_steps + 1):
             rendered_prompt = self.hf_tokenizer.apply_chat_template(
@@ -864,7 +891,7 @@ class ControlAIAgent:
 
             tool_calls, pre_text = _extract_tool_calls(model_output)
 
-            if not tool_calls:
+            if not tool_calls and not fabrication_refusals:
                 # The model chose to stop calling tools but produced no usable
                 # text either (typically right after a tool error it has no
                 # good way to recover from in-context). Retry once with no
@@ -881,6 +908,17 @@ class ControlAIAgent:
                     is_grounded=True,
                     plots=plots,
                 )
+
+            if not tool_calls:
+                # A fabrication refusal happened earlier this turn -- pre_text
+                # here is exactly the kind of confident, ungrounded prose that
+                # refusal was meant to prevent (observed directly: a blocked
+                # LQR call still produced a fully invented gain in this same
+                # spot). Don't trust it at face value; fall through to the
+                # shared forced-synthesis turn below instead of returning,
+                # since that turn explicitly instructs against inventing a
+                # substitute value.
+                break
 
             # Drop repeats. An exact-signature check alone is not enough: the
             # model will re-search with a lightly reworded query ("... MPC",
@@ -910,6 +948,8 @@ class ControlAIAgent:
 
                 tool_result = self._execute_with_provenance(tool_name, tool_args, messages)
                 traces.append(ToolExecutionTrace(tool_name=tool_name, arguments=tool_args, result=tool_result))
+                if tool_result.get("error_type") == "FabricatedParameter":
+                    fabrication_refusals.append(tool_result.get("error", ""))
 
                 if "plot_path" in tool_result:
                     p_path = Path(tool_result["plot_path"])
@@ -932,7 +972,7 @@ class ControlAIAgent:
                 "above don't actually address it, answer the question from your own knowledge instead of "
                 "describing the tool results. Do not call any more tools and do not output JSON or "
                 "tool-call tags -- write the final answer now."
-            ),
+            ) + _fabrication_refusal_note(fabrication_refusals),
         })
         forced_prompt = self.hf_tokenizer.apply_chat_template(
             messages,
@@ -1018,6 +1058,7 @@ class ControlAIAgent:
         thoughts: list[str] = []
         called_signatures: set[str] = set()
         tool_call_counts: dict[str, int] = {}
+        fabrication_refusals: list[str] = []
 
         # Dynamic thought generation - only show thoughts when tools or derivations occur
         for step in range(1, self.max_tool_steps + 1):
@@ -1032,7 +1073,7 @@ class ControlAIAgent:
 
             tool_calls, pre_text = _extract_tool_calls(model_output)
 
-            if not tool_calls:
+            if not tool_calls and not fabrication_refusals:
                 # Direct final answer without tools -> stream tokens directly
                 clean_output = pre_text or self._direct_answer(user_prompt, effective_sys, history)
                 if not clean_output:
@@ -1050,6 +1091,15 @@ class ControlAIAgent:
                     "thoughts": thoughts,
                 }
                 return
+
+            if not tool_calls:
+                # A fabrication refusal happened earlier this turn -- pre_text
+                # here is exactly the kind of confident, ungrounded prose that
+                # refusal was meant to prevent. Don't trust it at face value;
+                # fall through to the shared forced-synthesis turn below,
+                # which explicitly instructs against inventing a substitute
+                # value, instead of streaming it straight to the user.
+                break
 
             if pre_text:
                 thoughts.append(pre_text)
@@ -1094,6 +1144,8 @@ class ControlAIAgent:
                     "residual": tool_result.get("residual"),
                 }
                 traces.append(trace_item)
+                if tool_result.get("error_type") == "FabricatedParameter":
+                    fabrication_refusals.append(tool_result.get("error", ""))
 
                 if "plot_path" in tool_result:
                     p_path = Path(tool_result["plot_path"])
@@ -1127,7 +1179,7 @@ class ControlAIAgent:
                 "above don't actually address it, answer the question from your own knowledge instead of "
                 "describing the tool results. Do not call any more tools and do not output JSON or "
                 "tool-call tags -- write the final answer now."
-            ),
+            ) + _fabrication_refusal_note(fabrication_refusals),
         })
 
         forced_prompt = self.hf_tokenizer.apply_chat_template(
