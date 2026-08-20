@@ -13,6 +13,7 @@ import sys
 
 try:
     from mlx_lm import generate as mlx_generate, load as mlx_load
+    from mlx_lm.sample_utils import make_logits_processors
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
@@ -227,6 +228,14 @@ def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
     cleaned = _fix_doubled_latex_backslashes(cleaned)
     return calls, cleaned
 
+
+# Applied across every inference backend below. Without it, a small quantized
+# model under low-temperature decoding has no defense against falling into a
+# token-repetition loop once it starts (observed in production as
+# routh_hurwitz_analysis coefficient arrays of 300+ repeated zeros): it burns
+# the entire max_tokens budget on garbage, which is both the direct cause of
+# the degenerate-array tool-call failures and a major source of latency.
+REPETITION_PENALTY = 1.15
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -470,6 +479,45 @@ def _check_parameter_provenance(
     return None
 
 
+# ---------------------------------------------------------------------------
+# RAG fast path
+#
+# The system prompt already tells the model "for definitional questions,
+# answer from the retrieved reference passages, do not run a numeric solver"
+# -- but that instruction demonstrably does not hold on a 4B model either: in
+# production, "what is Routh-Hurwitz, explain with an example" (fully
+# answerable from the Nise/Ogata passages already injected into the system
+# prompt by _get_grounded_instruction) still drove the model through 4 tool
+# calls (a redundant re-search plus three unrelated numeric tools) and 5
+# sequential full-length generations before it produced an answer. Since
+# prompting alone can't be trusted here any more than it can for parameter
+# provenance above, this is enforced the same way: in code.
+#
+# A real computational request in this domain essentially always names a
+# concrete number (a coefficient, a gain, a frequency) or an explicit
+# computational verb ("plot", "design", "simulate"); a pure "what is X" /
+# "explain X" / "how does X work" question has neither. This heuristic only
+# ever widens back to the full tool loop on a false negative (a computational
+# question with no digits and none of these verbs) -- it never narrows
+# correctness, since the loop it skips still runs whenever this returns True.
+_COMPUTATION_KEYWORDS = (
+    "plot", "simulate", "simulation", "compute", "calculate", "design",
+    "solve", "gain", "matrix", "matrices", "pole", "place", "locus", "bode",
+    "nyquist", "margin", "response", "transfer function", "eigen",
+    "controllab", "observab", "lyapunov", "kalman", "mpc", "invert",
+    "determinant", "transpose", "multiply", "rank", "code", "script",
+)
+
+
+def _needs_tools(user_prompt: str) -> bool:
+    """True if the question plausibly needs a numeric tool rather than being
+    answerable straight from grounded reference text."""
+    if any(ch.isdigit() for ch in user_prompt):
+        return True
+    lower = user_prompt.lower()
+    return any(kw in lower for kw in _COMPUTATION_KEYWORDS)
+
+
 class ControlAIAgent:
     """Universal Control Engineering Agent supporting GGUF, Ollama C++, Apple MLX, and PyTorch."""
 
@@ -597,15 +645,18 @@ class ControlAIAgent:
             res = ollama.generate(
                 model=self.ollama_model,
                 prompt=prompt,
-                options={"temperature": 0.2, "num_predict": max_tokens},
+                options={"temperature": 0.2, "num_predict": max_tokens, "repeat_penalty": REPETITION_PENALTY},
             )
             return res.get("response", "").strip()
         elif self.is_gguf:
+            # llama_cpp defaults repeat_penalty to 1.0 (fully off) when unset --
+            # it does NOT inherit any sane default, so this must be passed explicitly.
             output = self.llama_model(
                 prompt,
                 max_tokens=max_tokens,
                 stop=["<|im_end|>", "<|endoftext|>"],
                 temperature=0.2,
+                repeat_penalty=REPETITION_PENALTY,
             )
             return output["choices"][0]["text"].strip()
         elif self.is_mlx:
@@ -614,6 +665,7 @@ class ControlAIAgent:
                 self.mlx_tokenizer,
                 prompt=prompt,
                 max_tokens=max_tokens,
+                logits_processors=make_logits_processors(repetition_penalty=REPETITION_PENALTY),
                 verbose=False,
             ).strip()
         else:
@@ -636,6 +688,7 @@ class ControlAIAgent:
                     temperature=None,
                     top_p=None,
                     top_k=None,
+                    repetition_penalty=REPETITION_PENALTY,
                     eos_token_id=eos_ids,
                     pad_token_id=self.hf_tokenizer.pad_token_id or self.hf_tokenizer.eos_token_id,
                 )
@@ -765,6 +818,22 @@ class ControlAIAgent:
         """Execute a complete agent interaction loop synchronously."""
         messages: list[dict[str, Any]] = []
         effective_sys = self._get_grounded_instruction(user_prompt, system_instruction)
+
+        # RAG fast path: a conceptual/definitional question that already has
+        # strong grounded passages needs one generation, not a multi-step tool
+        # loop. See the _needs_tools docstring for why this is safe.
+        if effective_sys != system_instruction and not _needs_tools(user_prompt):
+            fast_answer = self._direct_answer(user_prompt, effective_sys, history)
+            if fast_answer:
+                return AgentResult(
+                    final_response=fast_answer,
+                    tool_traces=[],
+                    total_steps=1,
+                    raw_messages=[{"role": "system", "content": effective_sys}, {"role": "user", "content": user_prompt}],
+                    is_grounded=True,
+                    plots=[],
+                )
+
         if effective_sys:
             messages.append({"role": "system", "content": effective_sys})
 
@@ -907,6 +976,26 @@ class ControlAIAgent:
         """Stream token-by-token generation and tool execution events with zero JSON leakage."""
         messages: list[dict[str, Any]] = []
         effective_sys = self._get_grounded_instruction(user_prompt, system_instruction)
+
+        # RAG fast path: a conceptual/definitional question that already has
+        # strong grounded passages needs one generation, not a multi-step tool
+        # loop. See the _needs_tools docstring for why this is safe.
+        if effective_sys != system_instruction and not _needs_tools(user_prompt):
+            fast_answer = self._direct_answer(user_prompt, effective_sys, history)
+            if fast_answer:
+                words = re.split(r"(\s+)", fast_answer)
+                for w in words:
+                    if w:
+                        yield {"type": "token", "content": w}
+                yield {
+                    "type": "done",
+                    "response": fast_answer,
+                    "traces": [],
+                    "plots": [],
+                    "thoughts": [],
+                }
+                return
+
         if effective_sys:
             messages.append({"role": "system", "content": effective_sys})
 

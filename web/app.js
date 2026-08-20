@@ -145,6 +145,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const mathPlaceholders = [];
     let text = rawText;
 
+    // A later, wider extraction (e.g. step 1's $$...$$) can swallow a
+    // placeholder already emitted by an earlier step (e.g. step 0's bare
+    // \begin{bmatrix}...\end{bmatrix}), since $$ \begin{bmatrix}...\end{bmatrix} $$
+    // is valid LaTeX and gets caught whole. Without this, the captured
+    // "formula" is literally the placeholder token text (e.g. "R =
+    // KATEXBLOCK0KATEX"), which is not valid LaTeX -- KaTeX then renders
+    // that placeholder string itself instead of the matrix it stood for.
+    // Resolve any nested placeholder back to its original formula before
+    // storing a new one.
+    const resolveNestedPlaceholders = (str) =>
+      str.replace(/KATEX(?:BLOCK|INLINE)(\d+)KATEX/g, (m, idx) => {
+        const item = mathPlaceholders[Number(idx)];
+        return item ? item.formula : m;
+      });
+
     // Clean up any raw LaTeX document structure artifacts
     text = text.replace(/\\section\*?\{([\s\S]*?)\}/g, '### $1\n\n');
     text = text.replace(/\\subsection\*?\{([\s\S]*?)\}/g, '#### $1\n\n');
@@ -176,28 +191,28 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1. Extract Display Math: $$ ... $$
     text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
       const ph = `KATEXBLOCK${mathPlaceholders.length}KATEX`;
-      mathPlaceholders.push({ type: 'block', formula: formula.trim() });
+      mathPlaceholders.push({ type: 'block', formula: resolveNestedPlaceholders(formula.trim()) });
       return `\n\n${ph}\n\n`;
     });
 
     // 2. Extract Display Math: \[ ... \]
     text = text.replace(/\\\[([\s\S]*?)\\\]/g, (match, formula) => {
       const ph = `KATEXBLOCK${mathPlaceholders.length}KATEX`;
-      mathPlaceholders.push({ type: 'block', formula: formula.trim() });
+      mathPlaceholders.push({ type: 'block', formula: resolveNestedPlaceholders(formula.trim()) });
       return `\n\n${ph}\n\n`;
     });
 
     // 3. Extract Inline Math: $ ... $ (excluding empty or multi-line)
     text = text.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
       const ph = `KATEXINLINE${mathPlaceholders.length}KATEX`;
-      mathPlaceholders.push({ type: 'inline', formula: formula.trim() });
+      mathPlaceholders.push({ type: 'inline', formula: resolveNestedPlaceholders(formula.trim()) });
       return ph;
     });
 
     // 4. Extract Inline Math: \( ... \)
     text = text.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => {
       const ph = `KATEXINLINE${mathPlaceholders.length}KATEX`;
-      mathPlaceholders.push({ type: 'inline', formula: formula.trim() });
+      mathPlaceholders.push({ type: 'inline', formula: resolveNestedPlaceholders(formula.trim()) });
       return ph;
     });
 
