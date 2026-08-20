@@ -200,6 +200,13 @@ def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
     # 3. Raw JSON object containing "name" and "arguments" / "parameters"
     if not calls and ('"name"' in text or "'name'" in text):
         match = re.search(r"(\{\s*[\"']name[\"']\s*:\s*[\"'][a-zA-Z0-9_]+[\"'][\s\S]*\})", text)
+        if not match:
+            # Generation was truncated mid-JSON (e.g. a repetition loop hit the
+            # token budget before the array closed), so there's no closing "}"
+            # to anchor on -- fall back to matching to the end of the string so
+            # close_unbalanced_json can still repair it and _degenerate_array_reason
+            # can refuse it, instead of the raw truncated JSON leaking into the chat.
+            match = re.search(r"(\{\s*[\"']name[\"']\s*:\s*[\"'][a-zA-Z0-9_]+[\"'][\s\S]*)", text)
         if match:
             obj = parse_flexible_json(match.group(1))
             if obj and "name" in obj:
@@ -209,6 +216,9 @@ def _extract_tool_calls(text: str) -> tuple[list[dict[str, Any]], str]:
     cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", text, flags=re.DOTALL)
     cleaned = re.sub(r"```(?:json)?\s*\{\s*[\"']name[\"']\s*:[\s\S]*?\}\s*```", "", cleaned)
     cleaned = re.sub(r"\{\s*[\"']name[\"']\s*:\s*[\"'][a-zA-Z0-9_]+[\"'][\s\S]*\}", "", cleaned)
+    # Same truncated-JSON fallback as above, so the leftover raw JSON is
+    # stripped from the visible text even when it never closed.
+    cleaned = re.sub(r"\{\s*[\"']name[\"']\s*:\s*[\"'][a-zA-Z0-9_]+[\"'][\s\S]*", "", cleaned)
     # An orphaned <tool_call> tag with no matching close (the model started a
     # call, then abandoned it mid-generation for plain text) survives the
     # paired regex above -- strip any leftover tag so it never reaches the UI.
