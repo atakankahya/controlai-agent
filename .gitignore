@@ -14,10 +14,19 @@ __pycache__/
 ._*
 
 # Downloaded and generated data, books, and large corpora
-data/
+data/*
 *.pdf
 *.djvu
 *.epub
+
+# ...except the built RAG index itself (~23MB, not the multi-GB source PDFs
+# it was built from) -- this must ship with every deploy or the Space serves
+# zero retrieved chunks (observed directly: /api/status reported
+# indexed_chunks: 0 with this excluded, since data/ is never pushed to the
+# Space's git repo).
+!data/rag_index/
+!data/rag_index/chunks.json
+!data/rag_index/bm25.pkl
 
 # Model checkpoints and fine-tuned weights
 adapters/
