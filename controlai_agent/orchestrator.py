@@ -549,6 +549,49 @@ def _fabrication_refusal_note(refusals: list[str]) -> str:
     )
 
 
+# The web frontend resends the entire growing conversation on every turn
+# (web/app.js) with no client-side trimming, and nothing here capped it
+# either: a long chat would eventually exceed the GGUF backend's
+# n_ctx=16384 and error outright, or just keep getting slower with no
+# ceiling at all on the PyTorch/MLX backends. Budget is deliberately well
+# under 16384 to leave headroom for the system prompt, injected RAG
+# passages, the full tool-schema catalog, and the current turn's own
+# multi-step tool loop -- all of which share the same context window.
+MAX_HISTORY_TOKENS = 6000
+
+
+def _truncate_history(
+    history: list[dict[str, Any]] | None, tokenizer: Any, max_tokens: int = MAX_HISTORY_TOKENS
+) -> list[dict[str, Any]] | None:
+    """Keep the most recent turns of `history` that fit within max_tokens,
+    dropping the oldest first so a long conversation degrades (forgets early
+    turns) instead of failing outright."""
+    if not history:
+        return history
+
+    kept: list[dict[str, Any]] = []
+    total = 0
+    for item in reversed(history):
+        content = item.get("content", "")
+        if not isinstance(content, str) or not content:
+            continue
+        try:
+            n = len(tokenizer.encode(content))
+        except Exception:
+            n = len(content) // 4  # rough fallback if the tokenizer call itself fails
+        if kept and total + n > max_tokens:
+            break
+        kept.append(item)
+        total += n
+
+    kept.reverse()
+    # A leading assistant turn with no preceding user turn would read as a
+    # reply to nothing -- drop it.
+    while kept and kept[0].get("role") != "user":
+        kept.pop(0)
+    return kept
+
+
 class ControlAIAgent:
     """Universal Control Engineering Agent supporting GGUF, Ollama C++, Apple MLX, and PyTorch."""
 
@@ -881,6 +924,7 @@ class ControlAIAgent:
         verbose: bool = False,
     ) -> AgentResult:
         """Execute a complete agent interaction loop synchronously."""
+        history = _truncate_history(history, self.hf_tokenizer)
         messages: list[dict[str, Any]] = []
         effective_sys = self._get_grounded_instruction(user_prompt, system_instruction)
 
@@ -1053,6 +1097,7 @@ class ControlAIAgent:
         max_tokens_per_step: int = 2500,
     ) -> Generator[dict[str, Any], None, None]:
         """Stream token-by-token generation and tool execution events with zero JSON leakage."""
+        history = _truncate_history(history, self.hf_tokenizer)
         messages: list[dict[str, Any]] = []
         effective_sys = self._get_grounded_instruction(user_prompt, system_instruction)
 
