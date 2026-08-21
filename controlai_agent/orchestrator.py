@@ -654,7 +654,15 @@ class ControlAIAgent:
                 print(f"Loading PyTorch model: {hf_id} (threads: {num_threads})...")
                 self.hf_tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
                 has_cuda = torch.cuda.is_available()
-                dtype = torch.bfloat16 if has_cuda else torch.float32
+                # float16, not bfloat16: live-tested bf16 against this exact
+                # model on the zeta/wn step-response prompt and it reproducibly
+                # derived the wrong closed-loop coefficients (2.56/2.1952-ish
+                # instead of the correct 1.68/1.96) across both greedy and
+                # temperature=0.2 sampling -- the one thing GGUF/MLX (which got
+                # this right from the same weights) don't share with bf16 is
+                # its coarser 7-bit mantissa. Testing fp16's extra precision as
+                # the fix for that specific divergence.
+                dtype = torch.float16 if has_cuda else torch.float32
                 # SDPA is a large, free speedup over the "eager" attention
                 # default -- meaningful for the long tool-schema prompt prefix.
                 attn_impl = "sdpa" if has_cuda else None
