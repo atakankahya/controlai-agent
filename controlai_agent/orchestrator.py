@@ -239,6 +239,11 @@ REPETITION_PENALTY = 1.15
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# Our own fine-tuned model's repo -- every GGUF/Ollama/CUDA backend must load
+# ITS tokenizer and chat template (never a generic base model's), since the
+# tool-call format, special tokens, and vocab are specific to this fine-tune.
+CONTROLAI_HF_REPO = "atakankahya/ControlAI-Agent"
+
 # How many times a single tool may be invoked within one user turn. Two allows
 # a legitimate retry with corrected arguments after an error, while stopping
 # the model from spending its whole step budget re-running the same lookup.
@@ -572,7 +577,7 @@ class ControlAIAgent:
 
         if self.is_ollama:
             self.ollama_model = model_path.split(":", 1)[1] if ":" in str(model_path) else "controlai"
-            self.hf_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
+            self.hf_tokenizer = AutoTokenizer.from_pretrained(CONTROLAI_HF_REPO, trust_remote_code=True)
         elif self.is_gguf:
             if not HAS_LLAMA_CPP:
                 raise ImportError("llama-cpp-python is required to run GGUF models. Install it with: pip install llama-cpp-python")
@@ -582,7 +587,12 @@ class ControlAIAgent:
                 n_ctx=16384,
                 verbose=False,
             )
-            self.hf_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct", trust_remote_code=True)
+            # A local .gguf path carries no tokenizer/chat-template of its own --
+            # always load ours (never a generic base model's), same as the
+            # auto-downloaded deployment path below.
+            local_fused = PROJECT_ROOT / "models" / "controlai_fused"
+            tokenizer_source = str(local_fused) if local_fused.exists() else CONTROLAI_HF_REPO
+            self.hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
         elif self.is_mlx:
             if adapter_path:
                 self.model, self.mlx_tokenizer = mlx_load(model_path, adapter_path=adapter_path)
@@ -590,11 +600,22 @@ class ControlAIAgent:
                 self.model, self.mlx_tokenizer = mlx_load(model_path)
             self.hf_tokenizer = AutoTokenizer.from_pretrained(model_path)
         else:
-            # Universal Linux / Cloud / HuggingFace Spaces backend: Fast 4-bit C++ GGUF
+            # Universal Linux / Cloud / HuggingFace Spaces backend: fast C++ GGUF
             # of OUR OWN fine-tuned ControlAI model (never a generic base model).
-            CONTROLAI_HF_REPO = "atakankahya/ControlAI-Agent"
+            #
+            # Q8_0, not Q4_K_M: measured directly against this exact model on the
+            # "simulate a step response" prompt (3 runs each). Q4_K_M mis-routed
+            # tool calls in 3/3 runs (reached for continuous_lqr/bode_analysis
+            # instead of simulate_step_response, then hallucinated inconsistent
+            # overshoot values -- 8.6%, 43.1%, 25.4%, none near the true ~9.5%).
+            # Q6_K, Q8_0, and full f16 all called the correct tool with
+            # consistent, tool-verified numbers in 3/3 runs apiece, matching
+            # local MLX behavior -- Q8_0 was picked among those three because it
+            # was both the fastest of the three in this test (8-19s vs Q6_K's
+            # 11-25s and f16's 11-22s) and, at 8.5 bits/weight, close enough to
+            # f16 to be considered near-lossless, at roughly half f16's size.
             gguf_repo = os.environ.get("CONTROLAI_GGUF_REPO", CONTROLAI_HF_REPO)
-            gguf_filename = os.environ.get("CONTROLAI_GGUF_FILENAME", "*controlai-q4_k_m.gguf")
+            gguf_filename = os.environ.get("CONTROLAI_GGUF_FILENAME", "*controlai-q8_0.gguf")
 
             self.llama_model = None
             if HAS_LLAMA_CPP:

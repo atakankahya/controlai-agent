@@ -50,7 +50,7 @@ Standard large language models (LLMs) operate probabilistically without determin
 1. **Deterministic Scientific Sandbox:** Computes continuous/discrete algebraic Riccati equations (CARE/DARE), matrix exponentials, and Bode diagrams using LAPACK, SciPy, and CVXPY.
 2. **4-Stage Mathematical Proof Standard:** Formulates system class, analytical theorems, closed-form derivations, and engineering breakdown limits.
 3. **Dynamic Simulation & Plotting:** Solves nonlinear differential equations and renders verified trajectories directly in the interface.
-4. **Offline RAG Knowledge Engine:** Grounded with 68,000+ chunks indexed across classical and modern control engineering literature.
+4. **Offline RAG Knowledge Engine:** Grounded with 9,900+ chunks indexed across classical and modern control engineering literature.
 
 ---
 
@@ -64,7 +64,7 @@ graph TD
     subgraph Core Engine [Hybrid Verification Engine]
         Brain[Foundation Model - Qwen3-4B]
         LoRA[Theory & Tool Adapter - SFT]
-        RAG[Offline Knowledge Engine - 68,000+ Chunks]
+        RAG[Offline Knowledge Engine - 9,900+ Chunks]
         Tools[Deterministic Numerical Tool Suite]
     end
     
