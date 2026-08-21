@@ -616,12 +616,16 @@ class ControlAIAgent:
             # f16 to be considered near-lossless, at roughly half f16's size.
             gguf_repo = os.environ.get("CONTROLAI_GGUF_REPO", CONTROLAI_HF_REPO)
             gguf_filename = os.environ.get("CONTROLAI_GGUF_FILENAME", "*controlai-q8_0.gguf")
+            # Escape hatch for measuring the PyTorch/CUDA path against the GGUF
+            # path on real deployment hardware -- set to "pytorch" to skip the
+            # GGUF attempt entirely and go straight to the branch below.
+            force_backend = os.environ.get("CONTROLAI_BACKEND", "").lower()
 
             self.llama_model = None
-            if HAS_LLAMA_CPP:
+            if HAS_LLAMA_CPP and force_backend != "pytorch":
                 try:
                     threads = min(os.cpu_count() or 2, 4)
-                    print(f"Loading high-speed GGUF Q4_K_M ControlAI model from {gguf_repo} (threads: {threads})...")
+                    print(f"Loading GGUF ControlAI model ({gguf_filename}) from {gguf_repo} (threads: {threads})...")
                     self.llama_model = llama_cpp.Llama.from_pretrained(
                         repo_id=gguf_repo,
                         filename=gguf_filename,
@@ -631,7 +635,7 @@ class ControlAIAgent:
                     )
                     self.is_gguf = True
                     self.hf_tokenizer = AutoTokenizer.from_pretrained(CONTROLAI_HF_REPO, trust_remote_code=True)
-                    print("GGUF Q4_K_M ControlAI model loaded successfully via llama_cpp.")
+                    print("GGUF ControlAI model loaded successfully via llama_cpp.")
                 except Exception as exc:
                     print(f"Notice: llama_cpp GGUF auto-load failed, falling back to PyTorch: {exc}")
                     self.is_gguf = False
