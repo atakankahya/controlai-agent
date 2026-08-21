@@ -735,8 +735,14 @@ class ControlAIAgent:
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=max_tokens,
-                    do_sample=False,
-                    temperature=None,
+                    # Pure greedy (do_sample=False) reproducibly derived the
+                    # WRONG closed-loop coefficients for a plain zeta/wn step
+                    # response on this exact model (2.56/2.1952 instead of the
+                    # correct 1.68/1.96, in 3/3 identical runs on deployed
+                    # bf16) -- low-temperature sampling, matching the GGUF/MLX
+                    # backends, is the fix being tested for that failure.
+                    do_sample=True,
+                    temperature=0.2,
                     top_p=None,
                     top_k=None,
                     repetition_penalty=REPETITION_PENALTY,
