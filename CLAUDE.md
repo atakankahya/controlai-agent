@@ -201,7 +201,10 @@ and attaches real hardware only inside a `@spaces.GPU` call; only CUDA operation
 window are intercepted. `app.py` normally builds the model in FastAPI's `lifespan`, on a
 `ThreadPoolExecutor` worker — after import, on another thread — and `.to("cuda")` there reaches real
 CUDA init and raises. `app_space.py::_build_agent_at_import` builds the agent during import and
-assigns `app._agent`, so `lifespan`'s `get_agent()` is a no-op. `device_map` fails independently, by
+assigns `app._agent`, so `lifespan`'s `get_agent()` is a no-op. **The retrieval embedder is a second
+model with the same problem** — it loads lazily on the first query, which is a request, outside the
+window — so the same function embeds one throwaway string to force it onto the GPU during import.
+Without that, the Space starts fine and every answer carries `[agent] retrieval failed`. `device_map` fails independently, by
 routing transformers through `caching_allocator_warmup` and its direct
 `torch.empty(..., device="cuda")`; bitsandbytes requires `device_map`, so **4-bit quantisation is
 unavailable**, which is what forces a model small enough to carry in bf16: `Qwen/Qwen3-8B`, ~16GB

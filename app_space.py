@@ -76,10 +76,18 @@ def _build_agent_at_import() -> None:
     """
     from controlai_agent.agent import ControlAgent
     from controlai_agent.engine_torch import TorchEngine
+    from controlai_rag.embeddings import get_embedder
 
     print("[space] building agent at import scope (ZeroGPU CUDA window)")
     app_module._agent = ControlAgent(engine=TorchEngine())
-    print("[space] agent ready")
+
+    # The retrieval embedder is a second model, and it loads lazily on first
+    # query -- which is a request, outside the import window, so it hit exactly
+    # the same _cuda_init wall and every answer came back with
+    # "[agent] retrieval failed". Force it onto the GPU here too. Embedding one
+    # throwaway string is what actually triggers the load.
+    get_embedder().encode_query("warmup")
+    print("[space] agent and embedder ready")
 
 
 _fetch_index()          # the agent prewarms retrieval, so the index must precede it
