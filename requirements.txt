@@ -1,32 +1,29 @@
-gradio>=5.9.0
-spaces>=0.30.0
+# ControlAI runtime dependencies -- local, Apple Silicon.
+#
+# Inference is MLX only. The previous file also carried torch, transformers,
+# accelerate, peft, llama-cpp-python, gradio and spaces to support a Hugging
+# Face Spaces deployment and three alternative backends; none of that is used
+# any more. transformers is still pulled in indirectly by mlx-lm for tokenizer
+# loading, so it is not listed here.
+
+mlx-lm>=0.31.0
 huggingface-hub>=0.23.0
-torch>=2.0.0
-transformers>=4.40.0
-accelerate>=0.28.0
-peft>=0.10.0
-jsonschema>=4.20.0
-scipy>=1.11.0
+
+# Deterministic numerics -- every number in an answer comes from these.
 numpy>=1.24.0
-matplotlib>=3.7.0
+scipy>=1.11.0
 control>=0.9.4
 cvxpy>=1.4.0
-rich>=13.7.0
+matplotlib>=3.7.0
+jsonschema>=4.20.0
+
+# Retrieval over the local control-engineering library.
 rank-bm25>=0.2.2
-# Pulls a prebuilt CPU wheel instead of compiling llama.cpp's C++ core from
-# source -- a source build routinely exceeds HF Spaces' build-job timeout
-# ("Job timeout" BUILD_ERROR, observed directly). This backend is CPU-only by
-# design (see the GGUF branch in orchestrator.py): llama.cpp's raw CUDA calls
-# aren't visible to ZeroGPU's torch-based interception, so a GPU wheel
-# wouldn't get real GPU time here anyway.
---extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-llama-cpp-python==0.3.35
 pypdf>=3.17.0
 pymupdf>=1.23.0
-scikit-learn>=1.3.0
-requests>=2.31.0
-pyyaml>=6.0.0
-pydantic>=2.0.0
+
+# Web console.
 fastapi>=0.110.0
 uvicorn>=0.28.0
 python-multipart>=0.0.9
+pydantic>=2.0.0

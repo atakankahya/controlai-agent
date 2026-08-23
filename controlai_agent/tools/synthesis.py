@@ -43,6 +43,12 @@ def continuous_lqr(
     return {
         "P": P.tolist(),
         "K": K.tolist(),
+        # Returned so the answer never has to derive it. The model was
+        # observed writing A - BK as [[-6, 1], [-5, -6]] for a double
+        # integrator whose true closed loop is [[0, 1], [-6, -5]] -- correct
+        # gain, wrong write-up. Handing it the computed matrix removes the
+        # arithmetic from the answer entirely.
+        "closed_loop_A": (A - B @ K).tolist(),
         "closed_loop_poles": [[float(p.real), float(p.imag)] for p in poles],
         "is_stable": bool(np.all(np.real(poles) < 0)),
         "verification": v_report,
@@ -79,6 +85,7 @@ def discrete_lqr(
     return {
         "P": P.tolist(),
         "K": K.tolist(),
+        "closed_loop_A": (A - B @ K).tolist(),
         "closed_loop_poles": [[float(p.real), float(p.imag)] for p in poles],
         "is_stable": bool(np.all(np.abs(poles) < 1.0)),
         "verification": v_report,
@@ -138,6 +145,7 @@ def place_state_feedback(
     v_report = verifier.verify_pole_placement(A_mat, B_mat, K, list(des))
     return {
         "K": K.tolist(),
+        "closed_loop_A": (A - B @ K).tolist(),
         "closed_loop_poles": [[float(p.real), float(p.imag)] for p in closed_poles],
         "target_poles": [[float(p.real), float(p.imag)] for p in des],
         "verification": v_report,

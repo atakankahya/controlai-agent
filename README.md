@@ -1,12 +1,3 @@
----
-title: ControlAI Agent
-colorFrom: blue
-colorTo: indigo
-sdk: gradio
-app_file: app.py
-pinned: false
----
-
 # ControlAI: Open-Source Safety-Critical AI Agent for Control Systems Engineering
 
 [![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces/atakankahya/ControlAI-Agent)
@@ -19,23 +10,29 @@ pinned: false
 
 ---
 
-## Quickstart: Run Locally in 2 Steps
+## Quickstart
 
-ControlAI runs locally on your workstation without cloud dependencies:
+ControlAI runs entirely on your own machine. Requires **Apple Silicon** (inference is MLX) with
+at least 16 GB of unified memory; the default model needs about 8 GB on disk and is downloaded on
+first run.
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/atakankahya/controlai-agent.git
 cd controlai-agent
+pip install -r requirements.txt
 
-# 2. Launch the application (Automatically opens browser at http://127.0.0.1:8000)
-./run.sh
+./run.sh                  # web console, opens http://127.0.0.1:8000
+./run.sh --cli            # interactive terminal chat
+./run.sh --cli "design an LQR for A=[[0,1],[-2,-3]], B=[[0],[1]], Q=eye(2), R=1"
+./run.sh --build-index    # build the dense retrieval index from data/user_docs/ (~45 min)
 ```
 
-To run in interactive terminal CLI mode instead:
-```bash
-./run.sh --cli
-```
+| Variable | Default | Purpose |
+| :-- | :-- | :-- |
+| `CONTROLAI_MODEL` | `mlx-community/Qwen3-14B-4bit` | any MLX model id or local path |
+| `CONTROLAI_ADAPTER` | *(none)* | optional LoRA adapter |
+| `CONTROLAI_THINKING` | `auto` | `off`, `auto` (conceptual questions only), or `on` |
+| `CONTROLAI_THINK_BUDGET` | `512` | ceiling on tokens spent reasoning |
 
 ---
 
@@ -50,7 +47,13 @@ Standard large language models (LLMs) operate probabilistically without determin
 1. **Deterministic Scientific Sandbox:** Computes continuous/discrete algebraic Riccati equations (CARE/DARE), matrix exponentials, and Bode diagrams using LAPACK, SciPy, and CVXPY.
 2. **4-Stage Mathematical Proof Standard:** Formulates system class, analytical theorems, closed-form derivations, and engineering breakdown limits.
 3. **Dynamic Simulation & Plotting:** Solves nonlinear differential equations and renders verified trajectories directly in the interface.
-4. **Offline RAG Knowledge Engine:** Grounded with 9,900+ chunks indexed across classical and modern control engineering literature.
+4. **Offline Retrieval:** 80,000+ chunks of classical and modern control literature, indexed locally.
+   The prebuilt index is not distributed -- it carries the full text of copyrighted textbooks --
+   so `--build-index` builds one from whatever you put in `data/user_docs/`.
+   Lexical and dense rankings are fused and gated on cosine similarity, so an unrelated passage is
+   dropped rather than cited — the retriever returning nothing is a normal outcome.
+5. **Bounded latency:** the fixed system-prompt and tool-schema prefix is prefilled once at startup
+   and reused across turns, so answers begin streaming in well under a second.
 
 ---
 
@@ -58,28 +61,27 @@ Standard large language models (LLMs) operate probabilistically without determin
 
 ```mermaid
 graph TD
-    User([Engineering Query]) --> WebApp[Web Console & CLI]
-    WebApp --> Orchestrator[ControlAI Agent Orchestrator]
-    
-    subgraph Core Engine [Hybrid Verification Engine]
-        Brain[Foundation Model - Qwen3-4B]
-        LoRA[Theory & Tool Adapter - SFT]
-        RAG[Offline Knowledge Engine - 9,900+ Chunks]
-        Tools[Deterministic Numerical Tool Suite]
+    User([Engineering Query]) --> Frontend[Web Console / CLI]
+    Frontend --> Agent[ControlAgent streaming tool loop]
+
+    subgraph Local[Runs entirely on-device]
+        Engine[LocalEngine - MLX, cached KV prefix]
+        Model[Qwen3-14B-4bit]
+        Retriever[Hybrid Retriever - BM25 + dense]
+        Tools[Deterministic Tool Registry]
     end
-    
-    Orchestrator --> Brain
-    Orchestrator --> LoRA
-    Orchestrator --> RAG
-    Orchestrator --> Tools
-    
-    Tools --> SciPy[SciPy / LAPACK / BLAS Matrix Solvers]
-    Tools --> PythonControl[Python Control ct.tf / step_response]
-    Tools --> PyExecutor[Python Simulation Sandbox]
-    Tools --> Verifier[Numerical Residual Verifier]
-    
-    Verifier --> FinalResponse[Verified Technical Synthesis & Plots]
-    FinalResponse --> WebApp
+
+    Agent --> Engine --> Model
+    Agent --> Retriever
+    Agent --> Tools
+
+    Tools --> SciPy[SciPy / LAPACK / BLAS]
+    Tools --> PythonControl[python-control]
+    Tools --> PyExecutor[Sandboxed Python]
+    Tools --> Verifier[Residual Verifier]
+
+    Verifier --> Answer[Verified answer, plots, citations]
+    Answer --> Frontend
 ```
 
 ---
@@ -106,6 +108,11 @@ graph TD
 ---
 
 ## Benchmark Results (ControlBench-v1)
+
+> **These figures were measured against the previous architecture** — the fine-tuned Qwen3-4B LoRA
+> served through the old orchestrator. That serving path has been replaced (base Qwen3-14B, no
+> adapter, rewritten agent loop and retriever), and the suite has not yet been re-run against it, so
+> treat the table as historical rather than as a description of the current build.
 
 Evaluated across **50 multi-pillar benchmark problems**:
 

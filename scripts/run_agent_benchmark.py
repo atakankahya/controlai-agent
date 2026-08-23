@@ -13,7 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from controlai_agent.orchestrator import ControlAIAgent
+from controlai_agent.agent import ControlAgent
+from controlai_agent.engine import LocalEngine
 
 
 def main() -> int:
@@ -59,7 +60,7 @@ def main() -> int:
     print(f"Total benchmark items: {len(items)}")
 
     print(f"Initializing ControlAI Agent ({args.model})...")
-    agent = ControlAIAgent(model_path=args.model, adapter_path=args.adapter_path)
+    agent = ControlAgent(engine=LocalEngine(model_id=args.model, adapter_path=args.adapter_path))
     print("Agent ready.")
 
     responses = []
@@ -72,27 +73,27 @@ def main() -> int:
         print(f"[{idx}/{len(items)}] Evaluating {item_id}...", end=" ", flush=True)
 
         item_start = time.time()
-        result = agent.run(prompt, max_tokens_per_step=args.max_tokens)
+        result = agent.run(prompt, max_tokens=args.max_tokens)
         elapsed = time.time() - item_start
 
-        tool_names = [t.tool_name for t in result.tool_traces]
-        print(f"done in {elapsed:.2f}s | Steps: {result.total_steps} | Tools: {tool_names}")
+        tool_names = [t.name for t in result.traces]
+        print(f"done in {elapsed:.2f}s | Steps: {len(result.traces)} | Tools: {tool_names}")
 
         record = {
             "benchmark_id": item_id,
             "id": item_id,
             "family": item.get("family", ""),
             "prompt": prompt,
-            "response": result.final_response,
+            "response": result.answer,
             "tool_calls": [
                 {
-                    "name": t.tool_name,
+                    "name": t.name,
                     "arguments": t.arguments,
                     "result": t.result,
                 }
-                for t in result.tool_traces
+                for t in result.traces
             ],
-            "total_steps": result.total_steps,
+            "total_steps": len(result.traces),
             "finish_reason": "stop",
         }
         responses.append(record)

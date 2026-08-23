@@ -18,8 +18,57 @@ ARTIFACT_DIR = Path("outputs/plots")
 
 
 @registry.register(
+    name="expand_polynomial_from_roots",
+    description=(
+        "Expand a transfer function or characteristic polynomial given in factored/root form -- "
+        "e.g. G(s) = K / (s*(s+1)*(s+5)), roots at s = 0, -1, -5 -- into exact polynomial "
+        "coefficients in descending powers. ALWAYS call this instead of multiplying the factors "
+        "out by hand before calling bode_analysis, stability_margins, simulate_step_response, "
+        "routh_hurwitz_analysis, root_locus, or any other tool that takes numerator/denominator "
+        "coefficients: hand-expanding factors is the single most common source of a silently "
+        "wrong tool call, since nothing downstream can verify an argument that was already wrong "
+        "going in. A factor '(s + a)' contributes the root -a; '(s - a)' contributes root a."
+    ),
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "roots": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "The roots of the polynomial, one per linear factor -- e.g. [0, -1, -5] for s*(s+1)*(s+5)",
+            },
+            "gain": {
+                "type": "number",
+                "default": 1.0,
+                "description": (
+                    "Multiplies every returned coefficient. Leave this at 1 when expanding a "
+                    "DENOMINATOR -- the overall constant K belongs in the numerator, not scaled "
+                    "into the denominator. For G(s) = 10/(s(s+1)(s+5)), expand roots [0,-1,-5] "
+                    "with gain 1 to get the denominator [1,6,5,0] and pass numerator [10] "
+                    "separately. Passing gain=10 here instead yields [10,60,50,0], which is the "
+                    "same transfer function scaled by 1/10 and silently wrong."
+                ),
+            },
+        },
+        "required": ["roots"],
+    },
+)
+def expand_polynomial_from_roots(roots: list[float], gain: float = 1.0) -> dict[str, Any]:
+    coefficients = (gain * np.poly(roots)).tolist()
+    return {
+        "status": "success",
+        "coefficients_descending": [float(c) for c in coefficients],
+        "degree": len(roots),
+    }
+
+
+@registry.register(
     name="bode_analysis",
-    description="Compute frequency response magnitude (linear & dB), phase (degrees), and bandwidth for transfer function G(s) = num(s) / den(s).",
+    description=(
+        "Compute the frequency response of G(s) = num(s)/den(s): magnitude in dB, phase in "
+        "degrees, resonant peak, DC gain, and the gain/phase margins with both crossover "
+        "frequencies."
+    ),
     parameters_schema={
         "type": "object",
         "properties": {
@@ -63,6 +112,13 @@ def bode_analysis(
         "frequencies_sample": w_out[::10].tolist(),
         "magnitudes_db_sample": mag_db[::10].tolist(),
         "phases_deg_sample": phase_deg[::10].tolist(),
+        # Margins are included even though `stability_margins` is the tool that
+        # advertises them. Asked for a phase margin, the model was observed
+        # reaching for bode_analysis, getting back only sampled curves, and
+        # concluding the margin "cannot be determined" -- a correct reading of
+        # a sampled plot, and a useless answer. Computing them here makes that
+        # routing choice harmless rather than fatal.
+        "margins": stability_margins(numerator, denominator),
     }
 
 

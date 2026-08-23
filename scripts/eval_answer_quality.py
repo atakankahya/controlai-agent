@@ -31,7 +31,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from controlai_agent.orchestrator import ControlAIAgent
+from controlai_agent.agent import ControlAgent
 
 PLACEHOLDER = "computational analysis has been completed"
 
@@ -67,7 +67,7 @@ DOUBLE_BS_PAT = re.compile(r"\\\\(?=[a-zA-Z|{}()])")
 
 def grade(question: str, result) -> tuple[list[str], dict]:
     """Return (list of problems, metrics) for one answer."""
-    text = result.final_response or ""
+    text = result.answer or ""
     problems: list[str] = []
 
     if not text.strip():
@@ -86,8 +86,8 @@ def grade(question: str, result) -> tuple[list[str], dict]:
     if RAW_FILENAME_PAT.search(text):
         problems.append("RAW filename in citation")
 
-    names = [t.tool_name for t in result.tool_traces]
-    failed = [t.tool_name for t in result.tool_traces if t.result.get("status") == "error"]
+    names = [t.name for t in result.traces]
+    failed = [t.name for t in result.traces if t.result.get("status") == "error"]
     if failed:
         problems.append(f"TOOL ERROR: {', '.join(sorted(set(failed)))}")
     for n in set(names):
@@ -108,7 +108,7 @@ def main() -> int:
         cases = cases[: args.limit]
 
     print(f"Loading agent...\n")
-    agent = ControlAIAgent()
+    agent = ControlAgent()
 
     failures: list[tuple[str, str, list[str]]] = []
     for i, (domain, q) in enumerate(cases, 1):
