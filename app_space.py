@@ -40,7 +40,8 @@ import gradio as gr
 import spaces
 import uvicorn
 
-from app import app, get_agent
+import app as app_module
+from app import app
 
 
 def _fetch_index() -> None:
@@ -57,6 +58,34 @@ def _fetch_index() -> None:
         print(f"[space] could not fetch the index ({exc}); retrieval disabled")
 
 
+def _build_agent_at_import() -> None:
+    """Construct the agent *now*, while this module is still being imported.
+
+    ZeroGPU installs its CUDA emulation by patching torch during the import of
+    the Space's entry module, and only operations that happen inside that window
+    are intercepted. `app.py` normally builds the model in FastAPI's `lifespan`,
+    on a ThreadPoolExecutor worker -- long after import, on another thread, where
+    the patching does not apply. `.to("cuda")` there reaches the real
+    `torch._C._cuda_init` and raises:
+
+        RuntimeError: Low-level CUDA init (`torch._C._cuda_init`) reached.
+
+    Building here and handing the finished agent to `app.py` keeps the load
+    inside the window. `lifespan` then finds `_agent` already set and its
+    `get_agent()` is a no-op.
+    """
+    from controlai_agent.agent import ControlAgent
+    from controlai_agent.engine_torch import TorchEngine
+
+    print("[space] building agent at import scope (ZeroGPU CUDA window)")
+    app_module._agent = ControlAgent(engine=TorchEngine())
+    print("[space] agent ready")
+
+
+_fetch_index()          # the agent prewarms retrieval, so the index must precede it
+_build_agent_at_import()
+
+
 @spaces.GPU(duration=120)
 def _gpu_probe(text: str) -> str:
     """Satisfies ZeroGPU's startup validation, and warms the model on first use.
@@ -64,8 +93,7 @@ def _gpu_probe(text: str) -> str:
     Takes only a plain string. The agent is reached through the module global --
     see note 4 above; passing it in is what hangs the whole Space.
     """
-    agent = get_agent()
-    return agent.run(text).answer if text else "ready"
+    return app_module.get_agent().run(text).answer if text else "ready"
 
 
 with gr.Blocks() as _gpu_demo:
@@ -76,7 +104,6 @@ with gr.Blocks() as _gpu_demo:
 
 
 def main() -> None:
-    _fetch_index()
     port = int(os.environ.get("PORT", 7860))
     # Separate port, non-blocking: see note 3.
     _gpu_demo.launch(

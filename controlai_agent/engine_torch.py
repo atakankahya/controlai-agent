@@ -20,19 +20,22 @@ It mirrors `LocalEngine`'s design decisions rather than reaching for
     punishes the `[`, `0`, `,` that matrices and JSON are made of.
 
 **Loading is bf16 and moves to the GPU with an explicit `.to("cuda")`. Do not
-reintroduce `device_map` or bitsandbytes here.** Both are the obvious thing to
-reach for and both break on ZeroGPU, which is the only place this file runs:
+reintroduce `device_map` or bitsandbytes, and do not construct this class lazily
+at request time.** All three break on ZeroGPU, which is the only place this file
+runs, and all three fail the same way:
 
     RuntimeError: Low-level CUDA init (`torch._C._cuda_init`) reached. This
     means ZeroGPU's PyTorch CUDA emulation mode did not intercept a CUDA
     operation in your code.
 
-ZeroGPU emulates CUDA at startup and attaches real hardware only inside a
-`@spaces.GPU` call. Its emulation intercepts `.to("cuda")`, but passing
-`device_map` sends transformers through `caching_allocator_warmup`, which calls
-`torch.empty(..., device="cuda")` directly and trips the guard. bitsandbytes in
-turn *requires* `device_map` at load, so 4-bit quantisation is unavailable here
-as long as the model is loaded at startup rather than inside the GPU function.
+ZeroGPU patches torch during the import of the Space's entry module and attaches
+real hardware only inside a `@spaces.GPU` call. Only CUDA operations inside that
+import window are intercepted, so **where this object is constructed matters as
+much as how**: `app_space.py` builds it at module scope for exactly that reason.
+`device_map` fails on top of that, because it routes transformers through
+`caching_allocator_warmup`, which calls `torch.empty(..., device="cuda")`
+directly. bitsandbytes in turn *requires* `device_map`, so 4-bit quantisation is
+unavailable here — which is why the model has to be small enough in bf16.
 
 That is why the model is Qwen3-8B rather than the 14B run locally: bf16 8B is
 ~16GB to download against ~28GB, and a Space rebuild re-downloads from scratch.

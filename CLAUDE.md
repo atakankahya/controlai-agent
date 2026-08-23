@@ -193,16 +193,19 @@ mlx_lm` several frames from the real cause.
 cannot express either of the two things that matter: `DynamicCache.crop()` for prefix reuse across
 tool steps, and injecting `</think>` to close an overrunning reasoning block.
 
-**It loads bf16 and moves the model with an explicit `.to("cuda")`. Do not reintroduce `device_map`
-or bitsandbytes.** Both are the obvious thing to reach for and both fail on ZeroGPU with
-`RuntimeError: Low-level CUDA init (torch._C._cuda_init) reached`. ZeroGPU emulates CUDA at startup
-and attaches real hardware only inside a `@spaces.GPU` call; its emulation intercepts `.to("cuda")`,
-but `device_map` routes transformers through `caching_allocator_warmup`, which calls
-`torch.empty(..., device="cuda")` directly and trips the guard. bitsandbytes *requires* `device_map`
-at load, so **4-bit quantisation is unavailable** while the model is loaded at startup rather than
-inside the GPU function. That is the constraint that sets the Space's model: `Qwen/Qwen3-8B` in
-bf16, ~16GB to download, against ~28GB for the 14B run locally — and a Space rebuild re-downloads
-from scratch.
+**It loads bf16 with an explicit `.to("cuda")`, and `app_space.py` constructs it at module import
+scope. Do not reintroduce `device_map` or bitsandbytes, and do not move the construction into a
+lifespan or a request.** All of those fail identically with `RuntimeError: Low-level CUDA init
+(torch._C._cuda_init) reached`. ZeroGPU patches torch during the import of the Space's entry module
+and attaches real hardware only inside a `@spaces.GPU` call; only CUDA operations inside that import
+window are intercepted. `app.py` normally builds the model in FastAPI's `lifespan`, on a
+`ThreadPoolExecutor` worker — after import, on another thread — and `.to("cuda")` there reaches real
+CUDA init and raises. `app_space.py::_build_agent_at_import` builds the agent during import and
+assigns `app._agent`, so `lifespan`'s `get_agent()` is a no-op. `device_map` fails independently, by
+routing transformers through `caching_allocator_warmup` and its direct
+`torch.empty(..., device="cuda")`; bitsandbytes requires `device_map`, so **4-bit quantisation is
+unavailable**, which is what forces a model small enough to carry in bf16: `Qwen/Qwen3-8B`, ~16GB
+against ~28GB for the 14B run locally.
 
 **ZeroGPU platform gotchas, each learned by having the Space fail:**
 - A `@spaces.GPU` function is only detected if wired to a real Gradio event handler. One called
