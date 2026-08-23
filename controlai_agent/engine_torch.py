@@ -34,6 +34,22 @@ from typing import Any, Generator, Iterable, Sequence
 
 from controlai_agent.engine import Chunk, SamplingConfig, Stats
 
+
+def dtype_kwarg(dtype: Any) -> dict[str, Any]:
+    """`{"dtype": ...}` or `{"torch_dtype": ...}`, whichever this release takes.
+
+    transformers renamed the argument in 4.56 and the old spelling is gone in
+    recent releases. Pinning below 4.56 to keep using it is what broke the Space
+    build: the platform force-installs gradio 6.x, which requires
+    huggingface-hub >= 1.16, while every transformers < 4.56 requires < 1.0.
+    Detecting the spelling costs two lines and pins nothing.
+    """
+    import transformers
+
+    major, minor = (int(x) for x in transformers.__version__.split(".")[:2])
+    key = "dtype" if (major, minor) >= (4, 56) else "torch_dtype"
+    return {key: dtype}
+
 # The MLX default is a 4-bit MLX conversion, which transformers cannot read.
 # This is the same weights in a format it can, already quantised to NF4: ~9GB to
 # download rather than the ~28GB of the bf16 Qwen/Qwen3-14B, and no quantisation
@@ -67,10 +83,8 @@ class TorchEngine:
         # module docstring. The CPU branch exists only so the decode loop can be
         # exercised on a small model off a GPU box; it is far too slow to serve.
         cuda = torch.cuda.is_available()
-        # `torch_dtype`, not `dtype`: the newer spelling only exists from
-        # transformers 4.56, and requirements-space.txt pins older than that.
         kwargs: dict[str, Any] = {
-            "torch_dtype": torch.bfloat16 if cuda else torch.float32,
+            **dtype_kwarg(torch.bfloat16 if cuda else torch.float32),
             "device_map": {"": 0} if cuda else "cpu",
         }
         if load_in_4bit and not cuda:
@@ -203,6 +217,14 @@ class TorchEngine:
             return list(tokens)
 
         if shared < len(self._cache_tokens):
+            # crop() is what makes prefix reuse possible. It has moved around
+            # between transformers releases and this file no longer pins a
+            # version, so losing it costs speed, not correctness: fall back to
+            # re-prefilling the whole prompt.
+            if not hasattr(self._cache, "crop"):
+                self._cache = DynamicCache()
+                self._cache_tokens = []
+                return list(tokens)
             self._cache.crop(shared)
         self._cache_tokens = list(tokens[:shared])
         return list(tokens[shared:])

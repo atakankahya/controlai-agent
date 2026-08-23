@@ -60,9 +60,16 @@ class Embedder:
             from transformers import AutoModel, AutoTokenizer
 
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+            # transformers renamed torch_dtype -> dtype in 4.56; the Space
+            # resolves to whatever gradio's huggingface-hub floor allows, so
+            # detect rather than pin. See engine_torch.dtype_kwarg.
+            import transformers
+
+            _v = tuple(int(x) for x in transformers.__version__.split(".")[:2])
+            _key = "dtype" if _v >= (4, 56) else "torch_dtype"
             self._model = AutoModel.from_pretrained(
                 self.model_id,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                **{_key: torch.float16 if torch.cuda.is_available() else torch.float32},
             )
             self._model = self._model.to("cuda" if torch.cuda.is_available() else "cpu")
             self._model.eval()

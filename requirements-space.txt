@@ -4,16 +4,19 @@
 # through controlai_agent/engine_torch.py instead. Do NOT install this file
 # locally: requirements.txt is the Apple Silicon runtime and is MLX-only.
 
+# Deliberately unpinned above the floor. The Space platform force-installs its
+# own gradio, spaces, uvicorn and a torch ceiling on top of this file, and any
+# upper bound here can make the resolve impossible -- pinning transformers <4.56
+# did exactly that, because gradio 6.x needs huggingface-hub >=1.16 and every
+# transformers <4.56 needs <1.0.
 torch>=2.4.0
-# <4.56: engine_torch passes `torch_dtype=`, which the newer releases renamed.
-transformers>=4.51.0,<4.56
+transformers>=4.51.0
 accelerate>=0.30.0
 bitsandbytes>=0.43.0          # 4-bit NF4; CUDA-only
 sentencepiece>=0.2.0
 
-gradio>=4.44.0                # only for the ZeroGPU probe
-spaces>=0.30.0
-huggingface-hub>=0.23.0
+# gradio, spaces and huggingface-hub are injected by the platform at build
+# time; listing them here only adds constraints that can conflict with it.
 
 # Everything below is shared with requirements.txt (minus mlx-lm).
 numpy>=1.24.0

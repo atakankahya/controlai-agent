@@ -207,6 +207,14 @@ and silently offloads to CPU.
   with `_share_cuda_: only available on CUDA` after emitting nothing — which reads exactly like
   "just slow". Reach the agent through the module global.
 
+**Do not put an upper bound in `requirements-space.txt`.** The platform appends its own
+`gradio[oauth,mcp]`, `spaces`, `uvicorn` and a `torch` ceiling to whatever that file asks for, and
+one extra constraint can make the resolve impossible. Pinning `transformers<4.56` — to keep using
+the `torch_dtype=` kwarg it renamed — failed the build outright, because gradio 6.x requires
+`huggingface-hub>=1.16` and every `transformers<4.56` requires `<1.0`. `engine_torch.dtype_kwarg()`
+detects the spelling instead, and `_align_cache` falls back to a full re-prefill if `DynamicCache`
+has no `crop()`, so an unpinned transformers costs speed rather than correctness.
+
 The Space needs `HF_TOKEN` as a secret: the retrieval index is in a private dataset repo and
 `app_space.py::_fetch_index` pulls it at startup. Without it the Space still boots, and answers
 from model knowledge alone.
