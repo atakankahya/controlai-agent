@@ -53,33 +53,53 @@ class Embedder:
         self._pad_id: int | None = None
 
     def _ensure_loaded(self) -> None:
+        """Load the model and tokenizer, or leave the object exactly as it was.
+
+        Everything is built into locals and committed to `self` only once all of
+        it succeeded. An earlier version assigned `self._model` from
+        `from_pretrained` and then called `.to("cuda")`, which on ZeroGPU raises:
+        `self._model` was left set, `_eos_id` was never reached, and the next
+        call short-circuited on `self._model is not None` and appended None as a
+        token id -- surfacing much later as
+        `RuntimeError: Could not infer dtype of NoneType`, nowhere near the
+        actual failure. A half-loaded embedder must not look like a loaded one.
+        """
         if self._model is not None:
             return
+
         if self._backend == "torch":
             import torch
+            import transformers
             from transformers import AutoModel, AutoTokenizer
 
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-            # transformers renamed torch_dtype -> dtype in 4.56; the Space
-            # resolves to whatever gradio's huggingface-hub floor allows, so
-            # detect rather than pin. See engine_torch.dtype_kwarg.
-            import transformers
-
-            _v = tuple(int(x) for x in transformers.__version__.split(".")[:2])
-            _key = "dtype" if _v >= (4, 56) else "torch_dtype"
-            self._model = AutoModel.from_pretrained(
-                self.model_id,
-                **{_key: torch.float16 if torch.cuda.is_available() else torch.float32},
+            tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+            # transformers renamed torch_dtype -> dtype in 4.56, and nothing
+            # here pins a version. See engine_torch.dtype_kwarg.
+            version = tuple(int(x) for x in transformers.__version__.split(".")[:2])
+            key = "dtype" if version >= (4, 56) else "torch_dtype"
+            cuda = torch.cuda.is_available()
+            model = AutoModel.from_pretrained(
+                self.model_id, **{key: torch.float16 if cuda else torch.float32}
             )
-            self._model = self._model.to("cuda" if torch.cuda.is_available() else "cpu")
-            self._model.eval()
+            model = model.to("cuda" if cuda else "cpu")
+            model.eval()
         else:
             from mlx_lm import load
 
-            self._model, self._tokenizer = load(self.model_id)
-        ids = self._tokenizer.encode(EOS_TOKEN)
-        self._eos_id = ids[-1] if ids else self._tokenizer.eos_token_id
-        self._pad_id = self._tokenizer.pad_token_id or self._eos_id
+            model, tokenizer = load(self.model_id)
+
+        ids = tokenizer.encode(EOS_TOKEN)
+        eos_id = ids[-1] if ids else tokenizer.eos_token_id
+        if eos_id is None:
+            raise RuntimeError(
+                f"{self.model_id}: could not resolve an id for {EOS_TOKEN!r}, "
+                "which last-token pooling depends on"
+            )
+
+        self._tokenizer = tokenizer
+        self._eos_id = eos_id
+        self._pad_id = tokenizer.pad_token_id or eos_id
+        self._model = model   # last: this is what _ensure_loaded() checks
 
     @property
     def dim(self) -> int:
