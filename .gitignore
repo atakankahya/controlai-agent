@@ -24,9 +24,12 @@ data/*
 # zero retrieved chunks (observed directly: /api/status reported
 # indexed_chunks: 0 with this excluded, since data/ is never pushed to the
 # Space's git repo).
-!data/rag_index/
-!data/rag_index/chunks.json
-!data/rag_index/bm25.pkl
+# The retrieval index is NOT in git. The three artefacts total ~455MB (187MB
+# chunks.json, 144MB embeddings.npz, 124MB bm25.pkl), well past GitHub's 100MB
+# per-file limit, and chunks.json holds the full text of commercial textbooks,
+# which is fine to keep locally and wrong to redistribute. It lives in a private
+# Hub dataset repo instead -- `./run.sh --fetch-index`, or `--build-index` to
+# make your own from data/user_docs/.
 
 # Model checkpoints and fine-tuned weights
 adapters/
