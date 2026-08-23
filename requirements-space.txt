@@ -1,39 +1,38 @@
-# Dependencies for the Hugging Face Space only -- see app_space.py.
+# Hugging Face Space dependencies -- see app_space.py.
 #
-# The Space runs on Linux/NVIDIA, where MLX does not exist, so inference goes
-# through controlai_agent/engine_torch.py instead. Do NOT install this file
-# locally: requirements.txt is the Apple Silicon runtime and is MLX-only.
+# The Space runs on plain CPU hardware. Token generation is remote (RemoteEngine
+# -> Inference Providers), so there is no CUDA and no local LLM here. torch is
+# still needed, on CPU, for the 0.6B retrieval embedder: one query is a few
+# hundred milliseconds, which is fine.
+#
+# Do NOT install this locally: requirements.txt is the Apple Silicon MLX runtime.
 
-# Deliberately unpinned above the floor. The Space platform force-installs its
-# own gradio, spaces, uvicorn and a torch ceiling on top of this file, and any
-# upper bound here can make the resolve impossible -- pinning transformers <4.56
-# did exactly that, because gradio 6.x needs huggingface-hub >=1.16 and every
-# transformers <4.56 needs <1.0.
-# Left unconstrained deliberately. Pinning <2.9 to force CUDA 12 wheels was
-# tried, on the theory that torch 2.11's CUDA 13 wheels were behind ZeroGPU's
-# "No CUDA GPUs are available". It was not, and the pin was strictly worse:
-# unpinned, the log reaches "Waiting for a GPU" then "Successfully acquired a
-# GPU" before the worker dies (14.2s); pinned, neither line appears at all and
-# it fails in 1.8s, never reaching GPU acquisition. Do not retry that bound.
+# CPU wheels only. The default PyPI torch wheel drags several GB of CUDA
+# libraries that would never be used here.
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.4.0
+
+# No upper bound: the platform appends its own gradio/spaces/uvicorn on top of
+# this file, and one extra constraint can make the resolve impossible. Pinning
+# transformers<4.56 did exactly that once -- gradio 6 needs huggingface-hub>=1.16
+# and every transformers<4.56 needs <1.0.
 transformers>=4.51.0
-accelerate>=0.30.0
-bitsandbytes>=0.43.0          # 4-bit NF4; CUDA-only
-sentencepiece>=0.2.0
+huggingface-hub>=0.34.0        # InferenceClient.chat_completion
 
-# gradio, spaces and huggingface-hub are injected by the platform at build
-# time; listing them here only adds constraints that can conflict with it.
-
-# Everything below is shared with requirements.txt (minus mlx-lm).
+# Deterministic numerics -- every number in an answer comes from these, locally.
 numpy>=1.24.0
 scipy>=1.11.0
 control>=0.9.4
 cvxpy>=1.4.0
 matplotlib>=3.7.0
 jsonschema>=4.20.0
+
+# Retrieval over the local control-engineering library.
 rank-bm25>=0.2.2
 pypdf>=3.17.0
 pymupdf>=1.23.0
+
+# Web console.
 fastapi>=0.110.0
 uvicorn>=0.28.0
 python-multipart>=0.0.9

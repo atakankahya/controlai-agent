@@ -51,7 +51,7 @@ for directory in (STATIC_DIR, PLOTS_DIR, UPLOADS_DIR):
 # One thread, for the lifetime of the process: see the module docstring.
 def _uses_mlx() -> bool:
     return os.environ.get("CONTROLAI_BACKEND", "mlx").strip().lower() not in (
-        "torch", "pytorch", "cuda",
+        "torch", "pytorch", "cuda", "api", "remote", "hosted",
     )
 
 
@@ -87,6 +87,10 @@ def _make_engine():
     registry, every tool -- is identical either way.
     """
     backend = os.environ.get("CONTROLAI_BACKEND", "mlx").strip().lower()
+    if backend in ("api", "remote", "hosted"):
+        from controlai_agent.engine_api import RemoteEngine
+
+        return RemoteEngine()
     # "pytorch" is what the old orchestrator called this and it survives as a
     # variable on the deployed Space; "cuda" is the obvious other guess.
     if backend in ("torch", "pytorch", "cuda"):
@@ -100,7 +104,7 @@ def _make_engine():
         # MLX and died in an import several frames deeper than the real cause.
         raise ValueError(
             f"CONTROLAI_BACKEND={backend!r} is not a known backend "
-            f"(expected one of: mlx, torch/pytorch/cuda)"
+            f"(expected one of: mlx, torch/pytorch/cuda, api/remote/hosted)"
         )
     return None  # ControlAgent's own default, LocalEngine
 

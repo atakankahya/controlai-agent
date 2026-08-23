@@ -44,7 +44,12 @@ class Embedder:
         # retrieval on the Space looks over- or under-eager, MIN_COSINE is the
         # knob (CONTROLAI_MIN_COSINE), not this.
         self._backend = (backend or os.environ.get("CONTROLAI_BACKEND", "mlx")).lower()
-        if self._backend != "torch":
+        # Anything that is not MLX embeds through transformers. On the Space that
+        # is CPU torch, which is ample for one query at a time; "api" refers to
+        # where *generation* happens, and says nothing about the embedder.
+        if self._backend in ("torch", "pytorch", "cuda", "api", "remote", "hosted"):
+            self._backend = "torch"
+        else:
             self._backend = "mlx"
         self.model_id = model_id or (TORCH_MODEL_ID if self._backend == "torch" else MODEL_ID)
         self._model = None
