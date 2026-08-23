@@ -191,13 +191,18 @@ mlx_lm` several frames from the real cause.
 
 `engine_torch.py` mirrors `engine.py` rather than calling `model.generate`, because `generate`
 cannot express either of the two things that matter: `DynamicCache.crop()` for prefix reuse across
-tool steps, and injecting `</think>` to close an overrunning reasoning block. The default checkpoint is
-`unsloth/Qwen3-14B-bnb-4bit` — already NF4, so ~9GB downloads instead of the ~28GB of bf16
-`Qwen/Qwen3-14B` and there is no quantisation step at load, which matters because a Space rebuild
-re-downloads from scratch. `_already_quantised()` detects that and skips passing a second
-`BitsAndBytesConfig`, which transformers raises on rather than merging. `device_map={"": 0}` —
-**never `"auto"`**, which inspects free VRAM at load time, before ZeroGPU has attached hardware,
-and silently offloads to CPU.
+tool steps, and injecting `</think>` to close an overrunning reasoning block.
+
+**It loads bf16 and moves the model with an explicit `.to("cuda")`. Do not reintroduce `device_map`
+or bitsandbytes.** Both are the obvious thing to reach for and both fail on ZeroGPU with
+`RuntimeError: Low-level CUDA init (torch._C._cuda_init) reached`. ZeroGPU emulates CUDA at startup
+and attaches real hardware only inside a `@spaces.GPU` call; its emulation intercepts `.to("cuda")`,
+but `device_map` routes transformers through `caching_allocator_warmup`, which calls
+`torch.empty(..., device="cuda")` directly and trips the guard. bitsandbytes *requires* `device_map`
+at load, so **4-bit quantisation is unavailable** while the model is loaded at startup rather than
+inside the GPU function. That is the constraint that sets the Space's model: `Qwen/Qwen3-8B` in
+bf16, ~16GB to download, against ~28GB for the 14B run locally — and a Space rebuild re-downloads
+from scratch.
 
 **ZeroGPU platform gotchas, each learned by having the Space fail:**
 - A `@spaces.GPU` function is only detected if wired to a real Gradio event handler. One called

@@ -19,11 +19,23 @@ It mirrors `LocalEngine`'s design decisions rather than reaching for
     applied for the reason spelled out in `engine.py`: a flat repetition penalty
     punishes the `[`, `0`, `,` that matrices and JSON are made of.
 
-Loading is 4-bit NF4 via bitsandbytes: Qwen3-14B is ~28GB in bf16 and ~9GB
-quantised. `device_map={"": 0}` pins every layer to GPU 0 explicitly. Do not use
-`device_map="auto"` here -- it inspects free VRAM at load time, which on ZeroGPU
-happens *before* real hardware is attached to the process, and silently offloads
-layers to CPU.
+**Loading is bf16 and moves to the GPU with an explicit `.to("cuda")`. Do not
+reintroduce `device_map` or bitsandbytes here.** Both are the obvious thing to
+reach for and both break on ZeroGPU, which is the only place this file runs:
+
+    RuntimeError: Low-level CUDA init (`torch._C._cuda_init`) reached. This
+    means ZeroGPU's PyTorch CUDA emulation mode did not intercept a CUDA
+    operation in your code.
+
+ZeroGPU emulates CUDA at startup and attaches real hardware only inside a
+`@spaces.GPU` call. Its emulation intercepts `.to("cuda")`, but passing
+`device_map` sends transformers through `caching_allocator_warmup`, which calls
+`torch.empty(..., device="cuda")` directly and trips the guard. bitsandbytes in
+turn *requires* `device_map` at load, so 4-bit quantisation is unavailable here
+as long as the model is loaded at startup rather than inside the GPU function.
+
+That is why the model is Qwen3-8B rather than the 14B run locally: bf16 8B is
+~16GB to download against ~28GB, and a Space rebuild re-downloads from scratch.
 """
 
 from __future__ import annotations
@@ -50,11 +62,8 @@ def dtype_kwarg(dtype: Any) -> dict[str, Any]:
     key = "dtype" if (major, minor) >= (4, 56) else "torch_dtype"
     return {key: dtype}
 
-# The MLX default is a 4-bit MLX conversion, which transformers cannot read.
-# This is the same weights in a format it can, already quantised to NF4: ~9GB to
-# download rather than the ~28GB of the bf16 Qwen/Qwen3-14B, and no quantisation
-# step at load. That matters because a Space rebuild re-downloads from scratch.
-DEFAULT_TORCH_MODEL = os.environ.get("CONTROLAI_MODEL_TORCH", "unsloth/Qwen3-14B-bnb-4bit")
+# Smaller than the 14B run locally, deliberately: see the module docstring.
+DEFAULT_TORCH_MODEL = os.environ.get("CONTROLAI_MODEL_TORCH", "Qwen/Qwen3-8B")
 
 
 class TorchEngine:
@@ -66,7 +75,6 @@ class TorchEngine:
         adapter_path: str | None = None,
         sampling: SamplingConfig | None = None,
         max_cache_tokens: int = 32768,
-        load_in_4bit: bool = True,
     ) -> None:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -79,41 +87,23 @@ class TorchEngine:
         t0 = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-        # `{"": 0}` pins every layer to GPU 0 explicitly -- never "auto", see the
-        # module docstring. The CPU branch exists only so the decode loop can be
-        # exercised on a small model off a GPU box; it is far too slow to serve.
+        # No device_map and no quantization_config -- see the module docstring.
+        # Load to CPU, then move with .to(), which ZeroGPU's emulation intercepts.
+        # The CPU branch exists so the decode loop can be exercised on a small
+        # model off a GPU box; it is far too slow to actually serve.
         cuda = torch.cuda.is_available()
-        kwargs: dict[str, Any] = {
-            **dtype_kwarg(torch.bfloat16 if cuda else torch.float32),
-            "device_map": {"": 0} if cuda else "cpu",
-        }
-        if load_in_4bit and not cuda:
-            load_in_4bit = False  # bitsandbytes is CUDA-only
-        if load_in_4bit and self._already_quantised(model_id):
-            # A pre-quantised checkpoint carries its own quantization_config;
-            # passing a second one makes transformers raise rather than merge.
-            load_in_4bit = False
-            print(f"[torch] {model_id} ships quantised, using its own config")
-        if load_in_4bit:
-            from transformers import BitsAndBytesConfig
-
-            kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                # Quantising the quantisation constants too; ~0.4GB saved on a
-                # 14B model for no measurable quality cost.
-                bnb_4bit_use_double_quant=True,
-            )
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_id, **dtype_kwarg(torch.bfloat16 if cuda else torch.float32)
+        )
         if adapter_path:
             from peft import PeftModel
 
             self.model = PeftModel.from_pretrained(self.model, adapter_path)
+        self.model = self.model.to("cuda" if cuda else "cpu")
         self.model.eval()
         self.load_seconds = time.time() - t0
-        # Verifiable in the Space logs: if this says cpu, device_map silently
-        # offloaded and every request will be minutes rather than seconds.
+        # Verifiable in the Space logs: if this says cpu on the Space, the .to()
+        # did not take and every request will be minutes rather than seconds.
         print(f"[torch] {model_id} on {next(self.model.parameters()).device} "
               f"in {self.load_seconds:.1f}s")
 
@@ -128,15 +118,6 @@ class TorchEngine:
         self._tool_close = self._single_token("</tool_call>")
 
     # ------------------------------------------------------------------ setup
-
-    @staticmethod
-    def _already_quantised(model_id: str) -> bool:
-        try:
-            from transformers import AutoConfig
-
-            return getattr(AutoConfig.from_pretrained(model_id), "quantization_config", None) is not None
-        except Exception:  # noqa: BLE001 - fall back to quantising ourselves
-            return False
 
     def _token_ids(self, text: str) -> list[int]:
         try:
