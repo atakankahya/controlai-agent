@@ -44,6 +44,38 @@ import uvicorn
 import app as app_module
 from app import app
 
+# Filled in at import, before and after the model load, so the parent's CUDA
+# state can be compared against the worker's. See /api/gpudiag.
+_parent_state: dict = {}
+
+
+def _torch_state(label: str) -> dict:
+    import os as _os
+
+    import torch
+
+    state = {
+        "where": label,
+        "torch": torch.__version__,
+        "torch.version.cuda": torch.version.cuda,
+        "CUDA_VISIBLE_DEVICES": _os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "ZERO_GPU_PATCH_TORCH": _os.environ.get("ZERO_GPU_PATCH_TORCH"),
+        "pid": _os.getpid(),
+    }
+    # is_initialized() is the one that matters: if the parent has really
+    # initialised CUDA before ZeroGPU forks its worker, the child cannot use the
+    # GPU and reports "No CUDA GPUs are available" -- which is our exact error.
+    for name, fn in (
+        ("cuda.is_initialized", lambda: torch.cuda.is_initialized()),
+        ("cuda.is_available", lambda: torch.cuda.is_available()),
+        ("cuda.device_count", lambda: torch.cuda.device_count()),
+    ):
+        try:
+            state[name] = fn()
+        except Exception as exc:  # noqa: BLE001 - the message is the datum
+            state[name] = f"{type(exc).__name__}: {exc}"
+    return state
+
 
 def _fetch_index() -> None:
     """Pull the retrieval index into data/rag_index/ before the agent loads."""
@@ -79,6 +111,7 @@ def _build_agent_at_import() -> None:
     from controlai_agent.engine_torch import TorchEngine
     from controlai_rag.embeddings import get_embedder
 
+    _parent_state["before_model_load"] = _torch_state("parent-before-load")
     print("[space] building agent at import scope (ZeroGPU CUDA window)")
     app_module._agent = ControlAgent(engine=TorchEngine())
 
@@ -90,6 +123,8 @@ def _build_agent_at_import() -> None:
     get_embedder().encode_query("warmup")
     # Route every turn through the GPU-decorated generator above.
     app_module.stream_hook = _gpu_stream
+    _parent_state["after_model_load"] = _torch_state("parent-after-load")
+    print(f"[space] parent CUDA state after load: {_parent_state['after_model_load']}")
     print("[space] agent and embedder ready, GPU stream hook installed")
 
 
@@ -115,6 +150,40 @@ def _gpu_stream(message: str, history: list) -> Iterator[dict]:
     with no output at all.
     """
     yield from app_module.get_agent().stream(message, history)
+
+
+@spaces.GPU(duration=60)
+def _gpu_diagnostics() -> dict:
+    """Report CUDA state from inside the ZeroGPU worker, where it fails."""
+    import subprocess
+
+    state = _torch_state("gpu-worker")
+    try:
+        state["nvidia-smi"] = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=20,
+        ).stdout.strip() or "(no output)"
+    except Exception as exc:  # noqa: BLE001
+        state["nvidia-smi"] = f"{type(exc).__name__}: {exc}"
+    return state
+
+
+@app.get("/api/gpudiag")
+def gpudiag() -> dict:
+    """Compare parent-process CUDA state with the @spaces.GPU worker's.
+
+    A plain `def`, so Starlette runs it on its own threadpool -- the same
+    context the real inference path uses.
+    """
+    try:
+        worker = _gpu_diagnostics()
+    except Exception as exc:  # noqa: BLE001
+        worker = {"error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "parent_at_import": _parent_state,
+        "parent_now": _torch_state("parent-now"),
+        "worker": worker,
+    }
 
 
 @spaces.GPU(duration=60)
