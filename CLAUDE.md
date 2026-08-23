@@ -222,6 +222,16 @@ generations sharing one KV cache, and splitting them across separate calls would
 state on the far side of a process boundary each time. `_collect()` exists so `/api/chat` honours the
 hook too; `ControlAgent.run()` consumes `self.stream` directly and would bypass it.
 
+**The dedicated inference thread must never carry a CUDA call.** `spaces` intercepts CUDA only
+inside the context it manages, and `app.py`'s `ThreadPoolExecutor` is outside it — a `@spaces.GPU`
+call made from there fails in its own worker with `RuntimeError: No CUDA GPUs are available`, even
+with a GPU genuinely attached (`hardware.current: zero-a10g`). `USE_INFERENCE_THREAD` gates the
+executor on the backend: MLX keeps its single pinned thread, torch gets direct calls under the lock
+and hands `/api/chat/stream` a plain sync generator for Starlette's own threadpool. **This was found
+and fixed once before, in 4de16e3, and the MLX rewrite reintroduced it** — the executor was made
+unconditional because the CUDA path had been deleted. Read that commit before touching threading
+here.
+
 **ZeroGPU platform gotchas, each learned by having the Space fail:**
 - A `@spaces.GPU` function is only detected if wired to a real Gradio event handler. One called
   solely from a FastAPI route fails startup with "No @spaces.GPU function detected". Hence the

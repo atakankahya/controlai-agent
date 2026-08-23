@@ -49,7 +49,27 @@ for directory in (STATIC_DIR, PLOTS_DIR, UPLOADS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 # One thread, for the lifetime of the process: see the module docstring.
-inference_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="controlai")
+def _uses_mlx() -> bool:
+    return os.environ.get("CONTROLAI_BACKEND", "mlx").strip().lower() not in (
+        "torch", "pytorch", "cuda",
+    )
+
+
+# MLX keeps its compute stream in thread-local state, so every call must land on
+# one consistent OS thread for the process lifetime.
+#
+# **This must never be used for the CUDA/ZeroGPU path.** `spaces` only intercepts
+# CUDA inside the context it manages; a manually-created thread is outside it, and
+# a @spaces.GPU call made from one fails in its own worker with
+# "RuntimeError: No CUDA GPUs are available" even when the Space genuinely has a
+# GPU attached. This was found once before and fixed the same way (4de16e3); the
+# MLX rewrite reintroduced the unconditional executor and reintroduced the bug.
+USE_INFERENCE_THREAD = _uses_mlx()
+inference_executor = (
+    ThreadPoolExecutor(max_workers=1, thread_name_prefix="controlai")
+    if USE_INFERENCE_THREAD
+    else None
+)
 # The agent holds a single KV cache that every turn mutates, so turns must not
 # interleave even though they all land on the same thread.
 inference_lock = threading.Lock()
@@ -93,6 +113,10 @@ def get_agent() -> ControlAgent:
 
 
 async def _on_inference_thread(fn, *args):
+    if not USE_INFERENCE_THREAD:
+        # Deliberately blocking: on ZeroGPU the call has to stay in the context
+        # `spaces` manages, and a demo serving one turn at a time is fine.
+        return fn(*args)
     return await asyncio.get_running_loop().run_in_executor(inference_executor, fn, *args)
 
 
@@ -291,6 +315,29 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    def _sse(event: dict) -> str:
+        return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+
+    if not USE_INFERENCE_THREAD:
+        # ZeroGPU: hand Starlette a plain sync generator and let it iterate on
+        # its own threadpool. The queue-and-custom-executor relay below would
+        # put the @spaces.GPU call on a thread `spaces` does not manage.
+        def sync_relay():
+            try:
+                with inference_lock:
+                    for event in _to_wire_events(message, req.history):
+                        yield _sse(event)
+            except Exception as exc:
+                print(f"[chat] {type(exc).__name__}: {exc}")
+                yield _sse({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+
+        return StreamingResponse(
+            sync_relay(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive",
+                     "X-Accel-Buffering": "no"},
+        )
+
     events: queue.Queue = queue.Queue()
     sentinel = object()
 
@@ -314,7 +361,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             event = await loop.run_in_executor(None, events.get)
             if event is sentinel:
                 break
-            yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+            yield _sse(event)
 
     return StreamingResponse(
         relay(),
