@@ -10,10 +10,13 @@ ControlAI, and each of the four below was learned by having the Space fail:
     function detected". Hence the hidden probe button.
 2.  That function must be a module-level `def`. Nested inside a `with
     gr.Blocks():` block, the same detection fails.
-3.  Do not `gr.mount_gradio_app()` the probe into the FastAPI app and then run
-    uvicorn on the same port -- Gradio's own server setup collides with it
-    ("address already in use"). The probe launches on its own port; FastAPI is
-    the only thing bound to the public one.
+3.  Mount the probe into the FastAPI app; do not `launch()` it. An earlier note
+    said the opposite -- that mounting collided with "address already in use" --
+    but that was mounting *and* calling `launch()`, i.e. two servers. Mounting
+    alone, with one `uvicorn.run`, is a single server and does not collide.
+    Launching it separately is actively harmful now: Gradio 6 launches with SSR,
+    which spawns a Node subprocess and a server thread into the very process
+    ZeroGPU then `fork()`s its CUDA worker from.
 4.  Never pass the model-holding object as an *argument* to a `@spaces.GPU`
     function. ZeroGPU marshals arguments across a process boundary and will try
     to share the model's CUDA tensors, failing with `_share_cuda_: only
@@ -214,14 +217,12 @@ with gr.Blocks() as _gpu_demo:
 
 def main() -> None:
     port = int(os.environ.get("PORT", 7860))
-    # Separate port, non-blocking: see note 3.
-    _gpu_demo.launch(
-        server_name="0.0.0.0",
-        server_port=port + 1,
-        prevent_thread_lock=True,
-        share=False,
-    )
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    # Mounted, not launched: one server, one process, no Node SSR subprocess and
+    # no extra server thread in the process ZeroGPU forks its CUDA worker from.
+    # The mount still counts as wiring _gpu_probe to a Gradio event handler,
+    # which is what the platform's startup validation looks for.
+    merged = gr.mount_gradio_app(app, _gpu_demo, path="/_gpu")
+    uvicorn.run(merged, host="0.0.0.0", port=port, log_level="info")
 
 
 if __name__ == "__main__":
