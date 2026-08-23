@@ -20,13 +20,18 @@ class Document:
         }
 
 
+from controlai_rag.textfix import repair
+
+
 def load_pdf(path: Path) -> list[Document]:
     docs = []
     try:
         from pypdf import PdfReader
         reader = PdfReader(str(path))
         for idx, page in enumerate(reader.pages, 1):
-            text = page.extract_text() or ""
+            # Repair broken symbol-font extraction before the text is ever
+            # chunked or indexed -- see controlai_rag/textfix.py.
+            text = repair(page.extract_text() or "")
             if text.strip():
                 docs.append(Document(
                     content=text.strip(),

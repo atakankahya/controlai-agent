@@ -24,6 +24,21 @@ class Chunk:
         }
 
 
+def _chunk_id(doc: Document, chunk_index: int) -> str:
+    """A chunk id that is unique across the whole corpus.
+
+    `chunk_document` is called once per page, so a counter that restarts at
+    zero for each call made every page's first chunk `<file>_c0000`. The corpus
+    ended up with 154 distinct ids for 9,976 chunks, which silently broke
+    anything keyed on chunk_id. Including the page makes the id unique, since
+    (filename, page, index-within-page) is.
+    """
+    filename = doc.metadata.get("filename", "doc")
+    page = doc.metadata.get("page")
+    page_part = f"_p{int(page):05d}" if page is not None else ""
+    return f"{filename}{page_part}_c{chunk_index:04d}"
+
+
 def chunk_document(doc: Document, max_words: int = 350, overlap_words: int = 50) -> list[Chunk]:
     """Split document into coherent chunks with overlap, preserving paragraphs."""
     paragraphs = re.split(r"\n\s*\n", doc.content)
@@ -42,7 +57,7 @@ def chunk_document(doc: Document, max_words: int = 350, overlap_words: int = 50)
         else:
             if current_words:
                 chunk_text = " ".join(current_words)
-                chunk_id = f"{doc.metadata.get('filename', 'doc')}_c{chunk_index:04d}"
+                chunk_id = _chunk_id(doc, chunk_index)
                 chunks.append(Chunk(
                     text=chunk_text,
                     chunk_id=chunk_id,
@@ -57,7 +72,7 @@ def chunk_document(doc: Document, max_words: int = 350, overlap_words: int = 50)
 
     if current_words:
         chunk_text = " ".join(current_words)
-        chunk_id = f"{doc.metadata.get('filename', 'doc')}_c{chunk_index:04d}"
+        chunk_id = _chunk_id(doc, chunk_index)
         chunks.append(Chunk(
             text=chunk_text,
             chunk_id=chunk_id,
