@@ -28,6 +28,7 @@ it the retriever has no corpus and every answer falls back to model knowledge.
 from __future__ import annotations
 
 import os
+from typing import Iterator
 
 # Assigned, not setdefault: this module is the CUDA entry point by definition,
 # and a stale Space variable must not be able to select something else. One did
@@ -87,21 +88,52 @@ def _build_agent_at_import() -> None:
     # "[agent] retrieval failed". Force it onto the GPU here too. Embedding one
     # throwaway string is what actually triggers the load.
     get_embedder().encode_query("warmup")
-    print("[space] agent and embedder ready")
+    # Route every turn through the GPU-decorated generator above.
+    app_module.stream_hook = _gpu_stream
+    print("[space] agent and embedder ready, GPU stream hook installed")
 
 
-_fetch_index()          # the agent prewarms retrieval, so the index must precede it
-_build_agent_at_import()
+# One allocation per user turn, not per engine call. A turn is up to
+# MAX_TOOL_STEPS generations plus the tool executions between them, and they all
+# mutate the same KV cache; splitting them across separate @spaces.GPU calls
+# would put that shared state on the far side of a process boundary each time.
+# 300s is the ceiling for a turn that actually calls two tools.
+@spaces.GPU(duration=300)
+def _gpu_stream(message: str, history: list) -> Iterator[dict]:
+    """Run one whole agent turn with real hardware attached.
 
+    Everything about ControlAI's inference has to happen inside a call like this
+    one. ZeroGPU creates the model under CUDA *emulation* at import and packs its
+    tensors; only a @spaces.GPU call materialises them on a real device. Running
+    the forward passes anywhere else does not fail loudly -- it reads
+    unmaterialised tensors and returns fluent-looking multilingual noise at a few
+    minutes per turn, which is exactly what the Space did before this existed.
 
-@spaces.GPU(duration=120)
-def _gpu_probe(text: str) -> str:
-    """Satisfies ZeroGPU's startup validation, and warms the model on first use.
-
-    Takes only a plain string. The agent is reached through the module global --
-    see note 4 above; passing it in is what hangs the whole Space.
+    `message` and `history` are plain data. The agent is reached through the
+    module global and never passed in: ZeroGPU marshals arguments across a
+    process boundary and would try to share the model's CUDA tensors, hanging
+    with no output at all.
     """
-    return app_module.get_agent().run(text).answer if text else "ready"
+    yield from app_module.get_agent().stream(message, history)
+
+
+@spaces.GPU(duration=60)
+def _gpu_probe(text: str) -> str:
+    """Satisfies ZeroGPU's startup validation.
+
+    A @spaces.GPU function is only detected if it is wired to a real Gradio event
+    handler, and _gpu_stream is driven by FastAPI rather than by Gradio, so it
+    cannot serve that purpose itself. This one exists to be wired to the hidden
+    button below.
+    """
+    return "ready"
+
+
+# Both run at import, in this order: the index first (the agent touches retrieval
+# as it starts), then the agent -- which installs _gpu_stream, so it has to come
+# after that function exists.
+_fetch_index()
+_build_agent_at_import()
 
 
 with gr.Blocks() as _gpu_demo:

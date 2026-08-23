@@ -129,6 +129,41 @@ class ChatResponse(BaseModel):
     elapsed_seconds: float
 
 
+# Set by app_space.py to a @spaces.GPU-decorated generator. ZeroGPU attaches
+# real hardware only for the duration of such a call, so on the Space the whole
+# turn -- every tool step, every KV-cache mutation -- has to happen inside one.
+# Left None locally, where MLX needs no such thing.
+stream_hook = None
+
+
+def _stream_events(message: str, history: list[dict[str, str]]):
+    """The agent's raw events, through the GPU hook when one is installed."""
+    if stream_hook is not None:
+        yield from stream_hook(message, history)
+    else:
+        yield from get_agent().stream(message, history)
+
+
+def _collect(message: str, history: list[dict[str, str]]):
+    """`ControlAgent.run()` over `_stream_events`, so /api/chat honours the hook.
+
+    ControlAgent.run consumes self.stream directly, which would bypass the hook
+    and run inference outside the GPU window.
+    """
+    answer, plots, sources, stats = "", [], [], {}
+    traces: list[Any] = []
+    for event in _stream_events(message, history):
+        # The `done` event already carries the full traces, arguments included;
+        # accumulating tool_end events separately would only lose the arguments.
+        if event["type"] == "done":
+            answer = event["answer"]
+            traces = event["traces"]
+            plots = event["plots"]
+            sources = event["sources"]
+            stats = event["stats"]
+    return answer, traces, plots, sources, stats
+
+
 def _to_wire_events(message: str, history: list[dict[str, str]]):
     """Translate agent events into the shape the browser client consumes.
 
@@ -137,7 +172,7 @@ def _to_wire_events(message: str, history: list[dict[str, str]]):
     stable for the existing UI while the agent's own vocabulary stays clean.
     """
     thoughts: list[str] = []
-    for event in get_agent().stream(message, history):
+    for event in _stream_events(message, history):
         kind = event["type"]
         if kind == "text":
             yield {"type": "token", "content": event["text"]}
@@ -298,10 +333,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     def _run():
         with inference_lock:
-            return get_agent().run(message, req.history)
+            return _collect(message, req.history)
 
     try:
-        result = await _on_inference_thread(_run)
+        answer, traces, plots, _sources, _stats = await _on_inference_thread(_run)
     except Exception as exc:
         print(f"[chat] {type(exc).__name__}: {exc}")
         return ChatResponse(
@@ -310,9 +345,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
         )
 
     return ChatResponse(
-        response=result.answer,
-        tool_traces=[{"tool": t.name, "status": t.status} for t in result.traces],
-        plots=result.plots,
+        response=answer,
+        tool_traces=[{"tool": t.get("tool"), "status": t.get("status")} for t in traces],
+        plots=plots,
         elapsed_seconds=round(time.time() - started, 2),
     )
 

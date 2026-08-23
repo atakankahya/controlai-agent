@@ -210,6 +210,18 @@ routing transformers through `caching_allocator_warmup` and its direct
 unavailable**, which is what forces a model small enough to carry in bf16: `Qwen/Qwen3-8B`, ~16GB
 against ~28GB for the 14B run locally.
 
+**All inference must run inside a `@spaces.GPU` call.** Loading the model in the import window is
+necessary but not sufficient: ZeroGPU creates it under CUDA *emulation*, reports `cuda:0`, and packs
+its tensors — only a `@spaces.GPU` call materialises them on real hardware. Forward passes anywhere
+else do not fail. They read unmaterialised tensors and return fluent-looking multilingual noise at
+roughly fifteen minutes a turn, which is the worst possible failure mode: a demo that is up,
+responsive, and confidently wrong. `app.py` exposes a `stream_hook`, `None` locally; `app_space.py`
+sets it to `_gpu_stream`, a `@spaces.GPU(duration=300)` generator wrapping one whole agent turn.
+Wrapping the *turn* rather than each `engine.stream()` call is deliberate — a turn is several
+generations sharing one KV cache, and splitting them across separate calls would put that shared
+state on the far side of a process boundary each time. `_collect()` exists so `/api/chat` honours the
+hook too; `ControlAgent.run()` consumes `self.stream` directly and would bypass it.
+
 **ZeroGPU platform gotchas, each learned by having the Space fail:**
 - A `@spaces.GPU` function is only detected if wired to a real Gradio event handler. One called
   solely from a FastAPI route fails startup with "No @spaces.GPU function detected". Hence the
