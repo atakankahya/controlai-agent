@@ -187,9 +187,13 @@ switch — two branches, no orchestrator.
 
 `engine_torch.py` mirrors `engine.py` rather than calling `model.generate`, because `generate`
 cannot express either of the two things that matter: `DynamicCache.crop()` for prefix reuse across
-tool steps, and injecting `</think>` to close an overrunning reasoning block. Loading is 4-bit NF4
-(Qwen3-14B is ~28GB bf16, ~9GB quantised) with `device_map={"": 0}` — **never `"auto"`**, which
-inspects free VRAM at load time, before ZeroGPU has attached hardware, and silently offloads to CPU.
+tool steps, and injecting `</think>` to close an overrunning reasoning block. The default checkpoint is
+`unsloth/Qwen3-14B-bnb-4bit` — already NF4, so ~9GB downloads instead of the ~28GB of bf16
+`Qwen/Qwen3-14B` and there is no quantisation step at load, which matters because a Space rebuild
+re-downloads from scratch. `_already_quantised()` detects that and skips passing a second
+`BitsAndBytesConfig`, which transformers raises on rather than merging. `device_map={"": 0}` —
+**never `"auto"`**, which inspects free VRAM at load time, before ZeroGPU has attached hardware,
+and silently offloads to CPU.
 
 **ZeroGPU platform gotchas, each learned by having the Space fail:**
 - A `@spaces.GPU` function is only detected if wired to a real Gradio event handler. One called

@@ -35,8 +35,10 @@ from typing import Any, Generator, Iterable, Sequence
 from controlai_agent.engine import Chunk, SamplingConfig, Stats
 
 # The MLX default is a 4-bit MLX conversion, which transformers cannot read.
-# This is the same weights in a format it can.
-DEFAULT_TORCH_MODEL = os.environ.get("CONTROLAI_MODEL_TORCH", "Qwen/Qwen3-14B")
+# This is the same weights in a format it can, already quantised to NF4: ~9GB to
+# download rather than the ~28GB of the bf16 Qwen/Qwen3-14B, and no quantisation
+# step at load. That matters because a Space rebuild re-downloads from scratch.
+DEFAULT_TORCH_MODEL = os.environ.get("CONTROLAI_MODEL_TORCH", "unsloth/Qwen3-14B-bnb-4bit")
 
 
 class TorchEngine:
@@ -73,6 +75,11 @@ class TorchEngine:
         }
         if load_in_4bit and not cuda:
             load_in_4bit = False  # bitsandbytes is CUDA-only
+        if load_in_4bit and self._already_quantised(model_id):
+            # A pre-quantised checkpoint carries its own quantization_config;
+            # passing a second one makes transformers raise rather than merge.
+            load_in_4bit = False
+            print(f"[torch] {model_id} ships quantised, using its own config")
         if load_in_4bit:
             from transformers import BitsAndBytesConfig
 
@@ -107,6 +114,15 @@ class TorchEngine:
         self._tool_close = self._single_token("</tool_call>")
 
     # ------------------------------------------------------------------ setup
+
+    @staticmethod
+    def _already_quantised(model_id: str) -> bool:
+        try:
+            from transformers import AutoConfig
+
+            return getattr(AutoConfig.from_pretrained(model_id), "quantization_config", None) is not None
+        except Exception:  # noqa: BLE001 - fall back to quantising ourselves
+            return False
 
     def _token_ids(self, text: str) -> list[int]:
         try:
