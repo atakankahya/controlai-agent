@@ -10,13 +10,16 @@ ControlAI, and each of the four below was learned by having the Space fail:
     function detected". Hence the hidden probe button.
 2.  That function must be a module-level `def`. Nested inside a `with
     gr.Blocks():` block, the same detection fails.
-3.  Mount the probe into the FastAPI app; do not `launch()` it. An earlier note
-    said the opposite -- that mounting collided with "address already in use" --
-    but that was mounting *and* calling `launch()`, i.e. two servers. Mounting
-    alone, with one `uvicorn.run`, is a single server and does not collide.
-    Launching it separately is actively harmful now: Gradio 6 launches with SSR,
-    which spawns a Node subprocess and a server thread into the very process
-    ZeroGPU then `fork()`s its CUDA worker from.
+3.  The probe must be `launch()`ed, on its own port, and **not** merely mounted.
+    Mounting it with `gr.mount_gradio_app` was tried: the Space fails to start
+    with "No @spaces.GPU function detected during startup", so mounting does not
+    register the handler the way the platform's validation looks for. Do not
+    mount it into the FastAPI app and *also* run uvicorn on the same port,
+    though -- that is two servers and collides with "address already in use".
+    Launch with `ssr_mode=False`: Gradio 6 defaults to SSR, which spawns a Node
+    subprocess into the very process ZeroGPU then `fork()`s its CUDA worker
+    from, and a fork parent holding a subprocess is a plausible cause of the
+    worker's "No CUDA GPUs are available".
 4.  Never pass the model-holding object as an *argument* to a `@spaces.GPU`
     function. ZeroGPU marshals arguments across a process boundary and will try
     to share the model's CUDA tensors, failing with `_share_cuda_: only
@@ -217,12 +220,17 @@ with gr.Blocks() as _gpu_demo:
 
 def main() -> None:
     port = int(os.environ.get("PORT", 7860))
-    # Mounted, not launched: one server, one process, no Node SSR subprocess and
-    # no extra server thread in the process ZeroGPU forks its CUDA worker from.
-    # The mount still counts as wiring _gpu_probe to a Gradio event handler,
-    # which is what the platform's startup validation looks for.
-    merged = gr.mount_gradio_app(app, _gpu_demo, path="/_gpu")
-    uvicorn.run(merged, host="0.0.0.0", port=port, log_level="info")
+    # Launched, not mounted: mounting fails startup validation ("No @spaces.GPU
+    # function detected"). Separate port, non-blocking, and ssr_mode=False so no
+    # Node subprocess lands in the process ZeroGPU forks its CUDA worker from.
+    _gpu_demo.launch(
+        server_name="0.0.0.0",
+        server_port=port + 1,
+        prevent_thread_lock=True,
+        share=False,
+        ssr_mode=False,
+    )
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
 
 if __name__ == "__main__":
