@@ -9,7 +9,13 @@
 # upper bound here can make the resolve impossible -- pinning transformers <4.56
 # did exactly that, because gradio 6.x needs huggingface-hub >=1.16 and every
 # transformers <4.56 needs <1.0.
-torch>=2.4.0
+# Upper-bounded on purpose, unlike everything else here. Unconstrained, pip
+# resolved torch 2.11.0, whose wheels carry CUDA 13 (nvidia-cudnn-cu13,
+# cuda-toolkit 13.0.2). ZeroGPU then acquired a GPU and its own forked worker
+# still failed in torch.init(): "RuntimeError: No CUDA GPUs are available".
+# <2.9 keeps torch on CUDA 12 wheels, and on a release `spaces` has had time to
+# patch. Still well inside the platform's own `torch<=2.11.0`.
+torch>=2.4.0,<2.9
 transformers>=4.51.0
 accelerate>=0.30.0
 bitsandbytes>=0.43.0          # 4-bit NF4; CUDA-only
