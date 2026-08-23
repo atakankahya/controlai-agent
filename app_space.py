@@ -29,8 +29,11 @@ from __future__ import annotations
 
 import os
 
-# Must be set before app.py is imported: it decides which engine gets built.
-os.environ.setdefault("CONTROLAI_BACKEND", "torch")
+# Assigned, not setdefault: this module is the CUDA entry point by definition,
+# and a stale Space variable must not be able to select something else. One did
+# -- CONTROLAI_BACKEND=pytorch, left over from the old orchestrator -- and the
+# Space booted into the MLX engine and died on `import mlx_lm`.
+os.environ["CONTROLAI_BACKEND"] = "torch"
 # Qwen3-14B in 4-bit NF4. Override with CONTROLAI_MODEL_TORCH in Space settings.
 
 import gradio as gr

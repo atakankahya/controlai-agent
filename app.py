@@ -66,10 +66,22 @@ def _make_engine():
     never needs torch installed. Everything downstream -- the agent loop, the
     registry, every tool -- is identical either way.
     """
-    if os.environ.get("CONTROLAI_BACKEND", "mlx").lower() == "torch":
+    backend = os.environ.get("CONTROLAI_BACKEND", "mlx").strip().lower()
+    # "pytorch" is what the old orchestrator called this and it survives as a
+    # variable on the deployed Space; "cuda" is the obvious other guess.
+    if backend in ("torch", "pytorch", "cuda"):
         from controlai_agent.engine_torch import TorchEngine
 
         return TorchEngine()
+    if backend not in ("mlx", ""):
+        # Never fall through to MLX because a variable was misspelt. That is
+        # exactly what happened on the Space: CONTROLAI_BACKEND=pytorch did not
+        # match a check for "torch", so it built LocalEngine on a box with no
+        # MLX and died in an import several frames deeper than the real cause.
+        raise ValueError(
+            f"CONTROLAI_BACKEND={backend!r} is not a known backend "
+            f"(expected one of: mlx, torch/pytorch/cuda)"
+        )
     return None  # ControlAgent's own default, LocalEngine
 
 

@@ -181,9 +181,13 @@ of the serving path and uses `requirements-training.txt`/`requirements-corpus.tx
 
 ### Deployment (`app_space.py`, `engine_torch.py`, `requirements-space.txt`)
 The demo Space (huggingface.co/spaces/atakankahya/ControlAI-Agent) runs Linux/NVIDIA on ZeroGPU,
-where MLX does not exist. `CONTROLAI_BACKEND=torch` makes `app.py::_make_engine` build
+where MLX does not exist. `CONTROLAI_BACKEND` makes `app.py::_make_engine` build
 `TorchEngine` instead of `LocalEngine`; `Embedder` switches on the same variable. That is the whole
-switch — two branches, no orchestrator.
+switch — two branches, no orchestrator. It accepts `torch`, `pytorch` or `cuda`, and **raises on
+anything it does not recognise rather than falling back to MLX**. The deployed Space still carries
+`CONTROLAI_BACKEND=pytorch` as a variable from the old orchestrator; a check for `"torch"` alone
+silently selected MLX on a box with no MLX, and the failure surfaced as `ModuleNotFoundError:
+mlx_lm` several frames from the real cause.
 
 `engine_torch.py` mirrors `engine.py` rather than calling `model.generate`, because `generate`
 cannot express either of the two things that matter: `DynamicCache.crop()` for prefix reuse across
