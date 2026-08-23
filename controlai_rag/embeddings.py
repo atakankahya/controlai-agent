@@ -15,6 +15,9 @@ from pathlib import Path
 import numpy as np
 
 MODEL_ID = os.environ.get("CONTROLAI_EMBED_MODEL", "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ")
+# The Space runs on Linux, where MLX does not exist, so the same embedder has a
+# transformers path. It is the same weights unquantised; see `Embedder._backend`.
+TORCH_MODEL_ID = os.environ.get("CONTROLAI_EMBED_MODEL_TORCH", "Qwen/Qwen3-Embedding-0.6B")
 MAX_TOKENS = 512
 # Qwen3-Embedding pools the hidden state at the final position, and it was
 # trained with an explicit end-of-text token in that position. Omitting it is
@@ -34,31 +37,58 @@ QUERY_INSTRUCTION = (
 class Embedder:
     """Lazily-loaded sentence embedder producing L2-normalised float32 vectors."""
 
-    def __init__(self, model_id: str = MODEL_ID) -> None:
-        self.model_id = model_id
+    def __init__(self, model_id: str | None = None, backend: str | None = None) -> None:
+        # "mlx" locally, "torch" on the Space. The vectors in embeddings.npz were
+        # produced by the MLX 4-bit checkpoint; the bf16 transformers weights are
+        # the same model, so the two agree closely but not bit-exactly. If
+        # retrieval on the Space looks over- or under-eager, MIN_COSINE is the
+        # knob (CONTROLAI_MIN_COSINE), not this.
+        self._backend = (backend or os.environ.get("CONTROLAI_BACKEND", "mlx")).lower()
+        if self._backend != "torch":
+            self._backend = "mlx"
+        self.model_id = model_id or (TORCH_MODEL_ID if self._backend == "torch" else MODEL_ID)
         self._model = None
         self._tokenizer = None
         self._eos_id: int | None = None
         self._pad_id: int | None = None
 
     def _ensure_loaded(self) -> None:
-        if self._model is None:
+        if self._model is not None:
+            return
+        if self._backend == "torch":
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+            self._model = AutoModel.from_pretrained(
+                self.model_id,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            )
+            self._model = self._model.to("cuda" if torch.cuda.is_available() else "cpu")
+            self._model.eval()
+        else:
             from mlx_lm import load
 
             self._model, self._tokenizer = load(self.model_id)
-            ids = self._tokenizer.encode(EOS_TOKEN)
-            self._eos_id = ids[-1] if ids else self._tokenizer.eos_token_id
-            self._pad_id = self._tokenizer.pad_token_id or self._eos_id
+        ids = self._tokenizer.encode(EOS_TOKEN)
+        self._eos_id = ids[-1] if ids else self._tokenizer.eos_token_id
+        self._pad_id = self._tokenizer.pad_token_id or self._eos_id
 
     @property
     def dim(self) -> int:
         self._ensure_loaded()
+        if self._backend == "torch":
+            return int(self._model.config.hidden_size)
         return int(self._model.args.hidden_size)
 
     def _tokens_for(self, text: str) -> list[int]:
         return self._tokenizer.encode(text)[: MAX_TOKENS - 1] + [self._eos_id]
 
     def _encode_one(self, text: str) -> np.ndarray:
+        self._ensure_loaded()
+        if self._backend == "torch":
+            return self._encode_batch([self._tokens_for(text)])[0]
+
         import mlx.core as mx
 
         ids = self._tokens_for(text)
@@ -78,6 +108,10 @@ class Embedder:
         positions <= i, so tokens appended after the real end cannot influence
         the hidden state being pooled.
         """
+        self._ensure_loaded()
+        if self._backend == "torch":
+            return self._encode_batch_torch(batch)
+
         import mlx.core as mx
 
         lengths = [len(ids) for ids in batch]
@@ -88,6 +122,34 @@ class Embedder:
         picked = mx.stack([hidden[i, n - 1] for i, n in enumerate(lengths)]).astype(mx.float32)
         picked = picked / (mx.linalg.norm(picked, axis=-1, keepdims=True) + 1e-9)
         return np.array(picked, copy=True)
+
+    def _encode_batch_torch(self, batch: list[list[int]]) -> np.ndarray:
+        """`_encode_batch` on transformers. Same right-padding and same pooling.
+
+        An explicit attention mask is passed even though right-padding a causal
+        backbone is already safe, because transformers otherwise warns on every
+        call and the mask costs nothing.
+        """
+        import torch
+
+        lengths = [len(ids) for ids in batch]
+        width = max(lengths)
+        pad = self._pad_id
+        device = self._model.device
+        ids = torch.tensor(
+            [row + [pad] * (width - len(row)) for row in batch], device=device
+        )
+        mask = torch.zeros_like(ids)
+        for i, n in enumerate(lengths):
+            mask[i, :n] = 1
+
+        with torch.inference_mode():
+            hidden = self._model(input_ids=ids, attention_mask=mask).last_hidden_state
+        picked = torch.stack(
+            [hidden[i, n - 1] for i, n in enumerate(lengths)]
+        ).float()
+        picked = picked / (picked.norm(dim=-1, keepdim=True) + 1e-9)
+        return picked.cpu().numpy().astype(np.float32)
 
     def encode_documents(
         self,

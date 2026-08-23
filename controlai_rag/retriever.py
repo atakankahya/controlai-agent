@@ -18,6 +18,7 @@ Without it, retrieval degrades to lexical-only rather than failing.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,10 @@ EMBEDDINGS_PATH = INDEX_DIR / "embeddings.npz"
 # 0.62 sits in that 0.108-wide gap. The off-domain outlier is a pollen-allergy
 # query at 0.571, pulled up by biomedical material in the open_books tier --
 # everything genuinely unrelated lands near 0.42.
-MIN_COSINE = 0.62
+# Overridable because the Space embeds queries with the bf16 transformers
+# checkpoint rather than the MLX 4-bit one the index was built with; the two
+# agree closely, but this is the knob if the gate turns out mis-set there.
+MIN_COSINE = float(os.environ.get("CONTROLAI_MIN_COSINE", "0.62"))
 # Standard RRF constant; damps the influence of any single ranker's tail.
 RRF_K = 60
 

@@ -11,9 +11,13 @@ never from the model's own arithmetic. A BM25 + dense hybrid retriever over a lo
 corpus grounds conceptual answers. A FastAPI + vanilla-JS console and a terminal CLI are the two
 front ends. Nothing leaves the machine.
 
-Apple Silicon only. There is no CUDA, GGUF, Ollama, or Hugging Face Spaces path — an earlier
-version carried all four, and maintaining four backends for one machine was most of the complexity
-in the codebase.
+Apple Silicon only for local use. There is no GGUF or Ollama path — an earlier version carried
+both plus CUDA and a Spaces deployment, and maintaining four backends for one machine was most of
+the complexity in the codebase.
+
+One CUDA path came back, narrowly, for the public demo Space: see **Deployment** below. It is a
+second `Engine` implementation behind the same contract, selected by one env var. It does not touch
+the agent loop, the registry, or any tool.
 
 ## Commands
 
@@ -174,6 +178,40 @@ formats correctly. `CONTROLAI_ADAPTER=<path>` loads one anyway for A/B work.
 `configs/*.yaml` are MLX-LoRA training configs and `scripts/` holds the offline pipeline (corpus
 discovery → extraction → dataset generation → training → evaluation). That pipeline is independent
 of the serving path and uses `requirements-training.txt`/`requirements-corpus.txt`.
+
+### Deployment (`app_space.py`, `engine_torch.py`, `requirements-space.txt`)
+The demo Space (huggingface.co/spaces/atakankahya/ControlAI-Agent) runs Linux/NVIDIA on ZeroGPU,
+where MLX does not exist. `CONTROLAI_BACKEND=torch` makes `app.py::_make_engine` build
+`TorchEngine` instead of `LocalEngine`; `Embedder` switches on the same variable. That is the whole
+switch — two branches, no orchestrator.
+
+`engine_torch.py` mirrors `engine.py` rather than calling `model.generate`, because `generate`
+cannot express either of the two things that matter: `DynamicCache.crop()` for prefix reuse across
+tool steps, and injecting `</think>` to close an overrunning reasoning block. Loading is 4-bit NF4
+(Qwen3-14B is ~28GB bf16, ~9GB quantised) with `device_map={"": 0}` — **never `"auto"`**, which
+inspects free VRAM at load time, before ZeroGPU has attached hardware, and silently offloads to CPU.
+
+**ZeroGPU platform gotchas, each learned by having the Space fail:**
+- A `@spaces.GPU` function is only detected if wired to a real Gradio event handler. One called
+  solely from a FastAPI route fails startup with "No @spaces.GPU function detected". Hence the
+  hidden probe button.
+- That function must be a module-level `def`; nested inside `with gr.Blocks():` the detection fails.
+- Don't `mount_gradio_app()` the probe and then run uvicorn on the same port — Gradio's own server
+  setup collides ("address already in use"). The probe launches on `port + 1`, non-blocking.
+- **Never pass the model-holding object as an argument** to a `@spaces.GPU` function. ZeroGPU
+  marshals arguments across a process boundary and tries to share the model's CUDA tensors, failing
+  with `_share_cuda_: only available on CUDA` after emitting nothing — which reads exactly like
+  "just slow". Reach the agent through the module global.
+
+The Space needs `HF_TOKEN` as a secret: the retrieval index is in a private dataset repo and
+`app_space.py::_fetch_index` pulls it at startup. Without it the Space still boots, and answers
+from model knowledge alone.
+
+**The Space's queries are embedded with the bf16 `Qwen/Qwen3-Embedding-0.6B` while the index was
+built with the MLX 4-bit checkpoint.** Measured, the two produce vectors agreeing at cosine 0.96,
+and against the real 80,370-chunk index the gate behaves the same: in-domain worst best-match 0.712
+(MLX 0.708), off-domain best 0.528 (MLX 0.541). `MIN_COSINE = 0.62` therefore holds unchanged on
+both. `CONTROLAI_MIN_COSINE` overrides it if that ever drifts.
 
 ### Benchmark (`benchmarks/`)
 `controlbench_v1.jsonl` is the eval set; `SCOPE.md` defines the taxonomy and `README.md` the

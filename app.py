@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
 import shutil
 import sys
@@ -56,10 +57,26 @@ inference_lock = threading.Lock()
 _agent: ControlAgent | None = None
 
 
+def _make_engine():
+    """The engine for this process. MLX unless the Space asked for CUDA.
+
+    This is the *only* backend branch left in the serving path, and it exists
+    for one reason: the public demo Space runs on Linux/NVIDIA, where MLX does
+    not exist. `TorchEngine` is imported lazily so a normal Apple Silicon run
+    never needs torch installed. Everything downstream -- the agent loop, the
+    registry, every tool -- is identical either way.
+    """
+    if os.environ.get("CONTROLAI_BACKEND", "mlx").lower() == "torch":
+        from controlai_agent.engine_torch import TorchEngine
+
+        return TorchEngine()
+    return None  # ControlAgent's own default, LocalEngine
+
+
 def get_agent() -> ControlAgent:
     global _agent
     if _agent is None:
-        _agent = ControlAgent()
+        _agent = ControlAgent(engine=_make_engine())
     return _agent
 
 

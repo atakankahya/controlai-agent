@@ -1,0 +1,31 @@
+# Dependencies for the Hugging Face Space only -- see app_space.py.
+#
+# The Space runs on Linux/NVIDIA, where MLX does not exist, so inference goes
+# through controlai_agent/engine_torch.py instead. Do NOT install this file
+# locally: requirements.txt is the Apple Silicon runtime and is MLX-only.
+
+torch>=2.4.0
+# <4.56: engine_torch passes `torch_dtype=`, which the newer releases renamed.
+transformers>=4.51.0,<4.56
+accelerate>=0.30.0
+bitsandbytes>=0.43.0          # 4-bit NF4; CUDA-only
+sentencepiece>=0.2.0
+
+gradio>=4.44.0                # only for the ZeroGPU probe
+spaces>=0.30.0
+huggingface-hub>=0.23.0
+
+# Everything below is shared with requirements.txt (minus mlx-lm).
+numpy>=1.24.0
+scipy>=1.11.0
+control>=0.9.4
+cvxpy>=1.4.0
+matplotlib>=3.7.0
+jsonschema>=4.20.0
+rank-bm25>=0.2.2
+pypdf>=3.17.0
+pymupdf>=1.23.0
+fastapi>=0.110.0
+uvicorn>=0.28.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
