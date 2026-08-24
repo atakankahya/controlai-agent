@@ -129,9 +129,11 @@ with gr.Blocks(title="ControlAI", fill_height=True) as demo:
         "local install does not apply here — don't enter anything confidential. The full "
         "app, with its own console, runs on Apple Silicon: see the repository.*"
     )
+    # No `type=` argument: Gradio 6 dropped it, messages is the only format now.
+    # History therefore arrives as [{"role":..., "content":...}], which is what
+    # `respond` expects and what ControlAgent.stream takes.
     gr.ChatInterface(
         fn=respond,
-        type="messages",
         examples=[
             "Design an LQR for A=[[0,1],[-2,-3]], B=[[0],[1]], Q=eye(2), R=1.",
             "What is the phase margin of G(s) = 10/(s(s+1)(s+5))?",
