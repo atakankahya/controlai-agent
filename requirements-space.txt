@@ -1,25 +1,24 @@
 # Hugging Face Space dependencies -- see app_space.py.
 #
-# The Space runs on plain CPU hardware. Token generation is remote (RemoteEngine
-# -> Inference Providers), so there is no CUDA and no local LLM here. torch is
-# still needed, on CPU, for the 0.6B retrieval embedder: one query is a few
-# hundred milliseconds, which is fine.
+# The Space is a Gradio app on ZeroGPU (Linux/NVIDIA), where MLX does not exist,
+# so inference goes through controlai_agent/engine_torch.py. Do NOT install this
+# locally: requirements.txt on `main` is the Apple Silicon MLX runtime.
+
+# Unconstrained on purpose. The platform appends its own gradio, spaces, uvicorn
+# and a `torch<=2.11.0` ceiling to this file, and one extra bound of ours can
+# make the resolve impossible -- `transformers<4.56` did exactly that, because
+# gradio 6 needs huggingface-hub>=1.16 and every transformers<4.56 needs <1.0.
 #
-# Do NOT install this locally: requirements.txt is the Apple Silicon MLX runtime.
-
-# CPU wheels only. The default PyPI torch wheel drags several GB of CUDA
-# libraries that would never be used here.
---extra-index-url https://download.pytorch.org/whl/cpu
+# Do not pin torch down to CUDA 12 either: ZeroGPU is backed by Blackwell
+# (sm_120), which needs CUDA 12.8+, so an older wheel has no kernels for it.
 torch>=2.4.0
-
-# No upper bound: the platform appends its own gradio/spaces/uvicorn on top of
-# this file, and one extra constraint can make the resolve impossible. Pinning
-# transformers<4.56 did exactly that once -- gradio 6 needs huggingface-hub>=1.16
-# and every transformers<4.56 needs <1.0.
 transformers>=4.51.0
-huggingface-hub>=0.34.0        # InferenceClient.chat_completion
+accelerate>=0.30.0
 
-# Deterministic numerics -- every number in an answer comes from these, locally.
+# gradio, spaces and huggingface-hub are injected by the platform at build time;
+# listing them here only adds constraints to conflict with it.
+
+# Deterministic numerics -- every number in an answer comes from these.
 numpy>=1.24.0
 scipy>=1.11.0
 control>=0.9.4
@@ -31,9 +30,3 @@ jsonschema>=4.20.0
 rank-bm25>=0.2.2
 pypdf>=3.17.0
 pymupdf>=1.23.0
-
-# Web console.
-fastapi>=0.110.0
-uvicorn>=0.28.0
-python-multipart>=0.0.9
-pydantic>=2.0.0

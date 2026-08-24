@@ -179,53 +179,47 @@ formats correctly. `CONTROLAI_ADAPTER=<path>` loads one anyway for A/B work.
 discovery → extraction → dataset generation → training → evaluation). That pipeline is independent
 of the serving path and uses `requirements-training.txt`/`requirements-corpus.txt`.
 
-### Deployment (`app_space.py`, `engine_api.py`, `requirements-space.txt`)
-The demo Space runs **plain CPU hardware with hosted generation**, not ZeroGPU.
-`CONTROLAI_BACKEND=api` makes `app.py::_make_engine` build `RemoteEngine`; everything else —
-all 29 solvers, the verifier, the full 80,370-chunk retriever — runs in-process on the Space's CPU,
-where it costs milliseconds. Only token generation leaves the machine. The Space page says so
-plainly, because the local app's whole point is that nothing does.
+### Deployment (`app_space.py`, `engine_torch.py`, `requirements-space.txt`)
+The demo Space is a **Gradio app on ZeroGPU**, not the FastAPI console. That is not a preference:
+**ZeroGPU assumes the Gradio app is the Space.** It schedules GPU workers by forking the server
+process, and its startup validation looks for a `@spaces.GPU` function wired to a Gradio event
+handler. Keeping FastAPI on the public port with Gradio as a hidden side-car was tried at length and
+does not work — see the list below. `app_space.py` therefore gives Gradio the port and drives
+`ControlAgent` from inside `@spaces.GPU`. The `web/` console is lost on the Space only; the agent,
+the 29 solvers, the verifier and the 80,370-chunk retriever are all the same.
 
-`engine_api.py` renders the tool schemas through the model's own chat template locally and hands
-the result over as an ordinary **system message** — never as a `tools=` argument, which would make
-the provider apply its own template and return structured `tool_calls` the agent does not speak.
-Every provider serving Qwen3 offers `conversational` only, not raw text-generation, so `render()`
-returns a *message list* rather than a string; the agent treats that value as opaque, so nothing
-downstream cares. Thinking is disabled with Qwen3's `/no_think` soft switch rather than
-`chat_template_kwargs`, which is an `extra_body` passthrough not every provider forwards.
-
-`HF_TOKEN` must be a Space secret with **two** permissions: read on the private index dataset repo,
-and *Make calls to Inference Providers*. Missing the first disables retrieval silently; missing the
-second fails generation with `403 ... does not have sufficient permissions to call Inference
-Providers`.
-
-**ZeroGPU was tried at length and abandoned.** `engine_torch.py` is kept and works on an ordinary
-CUDA box; it is ZeroGPU specifically that does not fit. Seven distinct problems, recorded so the
-attempt is not repeated blind:
-1. **Dependency resolution.** The platform appends its own `gradio[oauth,mcp]`, `spaces`, `uvicorn`
-   and a `torch` ceiling to `requirements.txt`. Any upper bound of your own can make the resolve
-   impossible — `transformers<4.56` did, because gradio 6 needs `huggingface-hub>=1.16` and every
-   `transformers<4.56` needs `<1.0`.
-2. **Import-window loading.** ZeroGPU patches torch during the entry module's import and only
-   intercepts CUDA inside that window. Building the model in FastAPI's `lifespan`, on a worker
-   thread, reaches real CUDA init and raises.
-3. **`device_map` and bitsandbytes.** `device_map` routes transformers through
+Seven ZeroGPU constraints, each found the hard way. Read these before changing anything here:
+1. **No upper bounds in `requirements-space.txt`.** The platform appends its own
+   `gradio[oauth,mcp]`, `spaces`, `uvicorn` and a `torch` ceiling; one extra constraint can make the
+   resolve impossible. `transformers<4.56` did, because gradio 6 needs `huggingface-hub>=1.16` and
+   every `transformers<4.56` needs `<1.0`. **And do not pin torch down to CUDA 12** — ZeroGPU is
+   backed by Blackwell (sm_120), which needs CUDA 12.8+; an older wheel has no kernels for it.
+2. **Build the model at import scope.** ZeroGPU patches torch during the entry module's import and
+   only intercepts CUDA inside that window. Building it in a lifespan or a request reaches real CUDA
+   init and raises `Low-level CUDA init (torch._C._cuda_init) reached`.
+3. **No `device_map`, no bitsandbytes.** `device_map` routes transformers through
    `caching_allocator_warmup`'s direct `torch.empty(..., device="cuda")`, which trips the same
-   guard; bitsandbytes requires `device_map`, so 4-bit is unavailable.
+   guard; bitsandbytes requires `device_map`, so 4-bit is unavailable and the model must fit in bf16.
 4. **Inference must be inside `@spaces.GPU`.** Otherwise the packed tensors are never materialised
    and forward passes return fluent multilingual noise at ~15 min/turn — up, responsive, and
-   confidently wrong.
-5. **Thread context.** `spaces` intercepts CUDA only in the context it manages; a call from a
-   custom `ThreadPoolExecutor` thread fails with `No CUDA GPUs are available` even with a GPU
-   attached. Found and fixed once before in 4de16e3, then reintroduced by the MLX rewrite.
-6. **The probe must be `launch()`ed, not mounted.** `gr.mount_gradio_app` fails startup with
-   "No @spaces.GPU function detected". Launch it on its own port with `ssr_mode=False` (Gradio 6's
-   SSR spawns a Node subprocess into the process ZeroGPU forks from).
-7. **The structural one.** With all six fixed, the GPU is scheduled and acquired and ZeroGPU's own
-   forked worker still dies in `torch.init()`. A no-op `@spaces.GPU` function fails identically, so
-   it is not the model or the payload. Meanwhile the platform probes the public port for Gradio's
-   `/api/predict` and gets 404, because FastAPI owns it. ZeroGPU assumes the Gradio app *is* the
-   Space; this one is not.
+   confidently wrong. Wrap the whole *turn*: a turn is several generations sharing one KV cache.
+5. **Never pass the agent as an argument** to a `@spaces.GPU` function; reach it through a module
+   global. ZeroGPU marshals arguments across a process boundary and tries to share CUDA tensors,
+   hanging with no output.
+6. **The embedder is a second model** with the same import-window problem. It loads lazily on the
+   first query, so `_build()` embeds one throwaway string to force it in. Without that the Space
+   starts fine and every answer carries `[agent] retrieval failed`.
+7. **Gradio must own the public port.** With all of the above fixed but FastAPI on the port, the GPU
+   was scheduled and acquired and ZeroGPU's own forked worker still died in `torch.init()`, while
+   the platform probed the public port for `/api/predict` and got 404. A no-op `@spaces.GPU`
+   function failed identically, so it was not the model or the payload.
+
+`HF_TOKEN` must be a Space secret with read access to the private index dataset repo, or retrieval
+is silently disabled.
+
+`engine_api.py` is an unused-but-working alternative: `CONTROLAI_BACKEND=api` runs generation over
+Inference Providers with everything else local. It needs a token carrying *Make calls to Inference
+Providers*. Kept for anyone who wants a demo without a GPU at all.
 
 ### Benchmark (`benchmarks/`)
 `controlbench_v1.jsonl` is the eval set; `SCOPE.md` defines the taxonomy and `README.md` the
